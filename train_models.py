@@ -271,34 +271,70 @@ class StockTradingEnv(gym.Env):
     # (它們使用的欄位名稱在 _load_and_preprocess_data 中已處理好)
     def _get_observation(self, step):
         """根據給定的時間步 (T日收盤後) 計算觀察向量。"""
+        # step 是相對於 self.data_df 的索引 (從 0 開始)
         if step < 0 or step >= len(self.data_df):
+             # print(f"警告 ({self.stock_code}): _get_observation 收到無效的 step {step}")
+             # 如果 step 無效，返回零向量
              return np.zeros(self.observation_shape, dtype=np.float32)
 
-        obs_data = self.data_df.iloc[step]
-        close_price = obs_data['close']
-        atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0)
-        atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
-        ma_long_val = obs_data.get(f'SMA_{self.ma_long_period}', close_price)
-        rsi_val = obs_data.get(f'RSI_{self.rsi_period}', 50.0) / 100.0
-        holding_position = 1.0 if self.shares_held > 0 else 0.0
-        potential_sl, potential_tp, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl = 0.0, 0.0, 0.0, 0.0, 0.0
-        entry_p = self.entry_price
-        entry_a = self.entry_atr
-        if holding_position > 0 and entry_p > 0 and entry_a > 0:
-            potential_sl = entry_p - self.sl_atr_multiplier * entry_a
-            potential_tp = entry_p + self.tp_atr_multiplier * entry_a
-            if close_price > 0:
-                distance_to_sl_norm = (close_price - potential_sl) / close_price
-                distance_to_tp_norm = (potential_tp - close_price) / close_price
-            if close_price < potential_sl: is_below_potential_sl = 1.0
+        try: # 添加 try-except 塊來捕獲訪問數據時的潛在錯誤
+            obs_data = self.data_df.iloc[step]
 
-        features = [
-            price_ma_ratio, rsi_val, atr_norm_val, holding_position,
-            distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl
-        ]
-        observation = np.array(features, dtype=np.float32)
-        observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9)
-        return observation
+            # --- 直接在創建列表前計算所有特徵 ---
+            close_price = obs_data['close']
+
+            # Handle potential missing indicator columns if calculation failed earlier
+            atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0)
+            atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
+            ma_long_val = obs_data.get(f'SMA_{self.ma_long_period}', close_price) # Default to close if MA missing
+            rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0) # Default to neutral RSI
+
+            # 計算 price_ma_ratio
+            price_ma_ratio = close_price / ma_long_val if ma_long_val != 0 else 1.0
+            # 計算標準化 RSI
+            rsi_val = rsi_val_raw / 100.0
+            # 計算持倉狀態
+            holding_position = 1.0 if self.shares_held > 0 else 0.0
+
+            # 計算停損/停利相關特徵
+            potential_sl = 0.0
+            potential_tp = 0.0
+            distance_to_sl_norm = 0.0 # 標準化距離, >0 表示高於 SL
+            distance_to_tp_norm = 0.0 # 標準化距離, >0 表示低於 TP
+            is_below_potential_sl = 0.0
+            entry_p = self.entry_price
+            entry_a = self.entry_atr
+
+            if holding_position > 0 and entry_p > 0 and entry_a > 0:
+                potential_sl = entry_p - self.sl_atr_multiplier * entry_a
+                potential_tp = entry_p + self.tp_atr_multiplier * entry_a
+                if close_price > 0:
+                    distance_to_sl_norm = (close_price - potential_sl) / close_price
+                    distance_to_tp_norm = (potential_tp - close_price) / close_price # 價格低於 TP 時為正
+                # 只有當 potential_sl > 0 時才比較 (避免 entry_price 為 0 時的誤判)
+                if close_price < potential_sl and potential_sl > 0:
+                    is_below_potential_sl = 1.0
+
+            # --- 使用計算好的變數組裝 features 列表 ---
+            features = [
+                price_ma_ratio, rsi_val, atr_norm_val, holding_position,
+                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl
+            ]
+            observation = np.array(features, dtype=np.float32)
+            # 處理可能的 NaN 或 Inf
+            observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9)
+            return observation
+
+        except IndexError:
+             print(f"錯誤 ({self.stock_code}): _get_observation 索引錯誤，step {step} 超出範圍 (數據長度 {len(self.data_df)})")
+             return np.zeros(self.observation_shape, dtype=np.float32)
+        except KeyError as e:
+             print(f"錯誤 ({self.stock_code}): _get_observation 缺少欄位 {e} 在 step {step}")
+             return np.zeros(self.observation_shape, dtype=np.float32)
+        except Exception as e:
+             print(f"錯誤 ({self.stock_code}): _get_observation 在 step {step} 發生未知錯誤: {e}")
+             traceback.print_exc()
+             return np.zeros(self.observation_shape, dtype=np.float32)
 
     def _calculate_portfolio_value(self, step):
         """計算在 T 日收盤時的投資組合總價值。"""
