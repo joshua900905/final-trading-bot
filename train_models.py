@@ -424,8 +424,8 @@ if __name__ == '__main__':
 
     # --- Configuration ---
     # !!! 重要：請替換為您的 API 憑證 !!!
-    API_ACCOUNT = "YOUR_API_ACCOUNT"
-    API_PASSWORD = "YOUR_API_PASSWORD"
+    API_ACCOUNT = "N26132089"
+    API_PASSWORD = "joshua900905"
     STOCK_CODES_LIST = ['2330','2454','2317','2308','2881','2891','2382','2303','2882','2412',
                        '2886','3711','2884','2357','1216','2885','3034','3231','2892','2345']
 
@@ -434,9 +434,9 @@ if __name__ == '__main__':
     RUN_EVALUATION = False # Evaluation code is in a separate script
 
     # --- Training Parameters ---
-    START_DATE_TRAIN = '20220101'
-    END_DATE_TRAIN = '20221231'
-    INITIAL_CAPITAL_PER_MODEL = 1000000.0
+    START_DATE_TRAIN = '20200419'
+    END_DATE_TRAIN = '20250417'
+    INITIAL_CAPITAL_PER_MODEL = 5000000.0
     SHARES_PER_TRADE_TRAIN = 1000 # 1張
     MA_LONG_TRAIN = 50
     RSI_PERIOD_TRAIN = 14

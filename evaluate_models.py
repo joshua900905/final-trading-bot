@@ -600,9 +600,9 @@ if __name__ == '__main__':
                     '2886','3711','2884','2357','1216','2885','3034','3231','2892','2345']
 
      # --- 評估參數 ---
-     EVAL_START_DATE = '20230101'
-     EVAL_END_DATE = '20230630'
-     TOTAL_INITIAL_CAPITAL = 20000000.0 # 總初始資金
+     EVAL_START_DATE = '20200419'
+     EVAL_END_DATE = '20250417'
+     TOTAL_INITIAL_CAPITAL = 100,000,000.0 # 總初始資金
      MODELS_LOAD_DIR = "trained_individual_models" # 獨立模型儲存目錄
 
      # --- 指標和窗口參數 (應與訓練時一致) ---
