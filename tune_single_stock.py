@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # tune_single_stock.py - Script for Training a SINGLE Stock Model for Parameter Tuning
-# (MA10, MA20, MA50, RSI14, ATR14, Enhanced Reward Function + Holding Penalty, with Monitor)
+# (MA10, MA20, RSI14, ATR14, Enhanced Reward + Holding Penalty, Monitor)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -26,42 +26,32 @@ except ImportError:
 
 # --- Stock API Class ---
 class Stock_API:
-    # ... (與 train_models.py 中版本相同) ...
-    def __init__(self, account, password):
-        self.account = account; self.password = password
-        self.base_url = 'http://140.116.86.242:8081/stock/api/v1'
+    """Stock API Class - Buy/Sell methods won't be called by TradeExecutor in backtest mode."""
+    def __init__(self, account, password): self.account = account; self.password = password; self.base_url = 'http://140.116.86.242:8081/stock/api/v1'
     def Get_Stock_Informations(self, stock_code, start_date, stop_date):
-        information_url = (f"{self.base_url}/api_get_stock_info_from_date_json/{stock_code}/{start_date}/{stop_date}")
-        try:
-            response = requests.get(information_url, timeout=15); response.raise_for_status(); result = response.json()
+        information_url = (f"{self.base_url}/api_get_stock_info_from_date_json/{stock_code}/{start_date}/{stop_date}");
+        try: 
+            response = requests.get(information_url, timeout=15); response.raise_for_status(); result = response.json();
             if result.get('result') == 'success': data = result.get('data', []); return data if isinstance(data, list) else []
-            else: print(f"API 錯誤 (Get_Stock_Informations - {stock_code}, {start_date}-{stop_date}): {result.get('status', '未知狀態')}"); return []
+            else: print(f"API 錯誤 (Info - {stock_code}): {result.get('status', '未知')}"); return []
         except Exception as e: print(f"Get_Stock_Informations 出錯 ({stock_code}): {e}"); return []
-    def Get_User_Stocks(self):
-        data = {'account': self.account, 'password': self.password}; search_url = f'{self.base_url}/get_user_stocks'
-        try:
-            response = requests.post(search_url, data=data, timeout=15); response.raise_for_status(); result = response.json()
-            if result.get('result') == 'success': return result.get('data', []) if isinstance(result.get('data', []), list) else []
-            else: return []
-        except Exception: return []
-    def Buy_Stock(self, stock_code, stock_shares, stock_price): return True # Simulate success
-    def Sell_Stock(self, stock_code, stock_shares, stock_price): return True # Simulate success
+    def Get_User_Stocks(self): print("警告：Get_User_Stocks 在純回測模式下不應被調用。"); return []
+    def Buy_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Buy_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
+    def Sell_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Sell_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
 
-
-# --- StockTradingEnv Class (Single-Stock Training Environment - Multi MA Features) ---
+# --- StockTradingEnv Class (Single-Stock Training Environment - MA10/20 Features) ---
 class StockTradingEnv(gym.Env):
     """
     用於獨立訓練單支股票模型的 Gymnasium 環境。
-    (使用 MA10, MA20, MA50, 增強獎勵 + 不作為懲罰)
+    (使用 MA10, MA20, 增強獎勵 + 不作為懲罰)
     """
     metadata = {'render_modes': ['human', None], 'render_fps': 1}
 
-    # --- 修改: 添加 MA20, MA50 週期 (內部使用固定值), 更新 observation_shape ---
+    # --- 修改: 移除 ma_long, 更新 window_size 計算方式, 更新 observation_shape ---
     def __init__(self, stock_code, start_date, end_date, api_account, api_password,
                  initial_capital=1000000, shares_per_trade=1000,
-                 ma_short=10, rsi_period=14, atr_period=14, # MA20, MA50 使用固定值
+                 ma_short=10, ma_medium=20, rsi_period=14, atr_period=14, # MA20 固定
                  sl_atr_multiplier=2.0, tp_atr_multiplier=3.0,
-                 # window_size 會在內部基於最長週期 (MA50) 計算
                  reward_scaling=1.0, sl_penalty_factor=0.5, profit_bonus_factor=0.1,
                  loss_penalty_factor=0.2, holding_loss_penalty=0.01, transaction_penalty=0.005,
                  max_holding_penalty = 0.1, holding_penalty_increase_rate = 0.001,
@@ -70,27 +60,23 @@ class StockTradingEnv(gym.Env):
         self.stock_code = stock_code; self.start_date_str = start_date; self.end_date_str = end_date
         self.api = Stock_API(api_account, api_password); self.initial_capital = initial_capital; self.shares_per_trade = shares_per_trade
         self.ma_short_period = ma_short
-        self.ma_medium_period = 20 # 固定中期均線
-        self.ma_long_period = 50  # 固定長期均線
+        self.ma_medium_period = ma_medium # 使用中期均線
         self.rsi_period = rsi_period; self.atr_period = atr_period
         self.sl_atr_multiplier = sl_atr_multiplier; self.tp_atr_multiplier = tp_atr_multiplier
-        # --- 修改: window_size 基於 MA50 ---
-        self.window_size = max(self.ma_short_period, self.ma_medium_period, self.ma_long_period, self.rsi_period, self.atr_period) + 10
+        # --- 修改: window_size 基於 MA20 ---
+        self.window_size = max(self.ma_short_period, self.ma_medium_period, self.rsi_period, self.atr_period) + 10
 
         self.reward_scaling = reward_scaling; self.sl_penalty_factor = sl_penalty_factor; self.profit_bonus_factor = profit_bonus_factor
         self.loss_penalty_factor = loss_penalty_factor; self.holding_loss_penalty = holding_loss_penalty; self.transaction_penalty = transaction_penalty
         self.max_holding_penalty = max_holding_penalty; self.holding_penalty_increase_rate = holding_penalty_increase_rate
         self.render_mode = render_mode
+
         self.data_df = self._load_and_preprocess_data(start_date, end_date)
         if self.data_df is None or len(self.data_df) < self.window_size: actual_len = len(self.data_df) if self.data_df is not None else 0; raise ValueError(f"股票 {stock_code} 數據不足 (需 {self.window_size}, 實 {actual_len})")
         self.end_step = len(self.data_df) - 1; self.action_space = spaces.Discrete(3)
 
-        # --- 修改: 觀察空間維度增加到 11 ---
-        # 1. price/MA10, 2. price/MA20, 3. price/MA50
-        # 4. MA10/MA20, 5. MA20/MA50
-        # 6. RSI, 7. ATR_norm
-        # 8. holding, 9. dist_sl, 10. dist_tp, 11. below_sl
-        self.features_per_stock = 11
+        # --- 修改: 觀察空間維度變為 9 ---
+        self.features_per_stock = 9
         self.observation_shape = (self.features_per_stock,)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=self.observation_shape, dtype=np.float32)
         # ---
@@ -99,60 +85,55 @@ class StockTradingEnv(gym.Env):
         self.consecutive_hold_days = 0
 
     def _load_and_preprocess_data(self, start_date, end_date):
-        """載入、清洗數據並計算指標 (MA10, MA20, MA50, RSI14, ATR14)。"""
+        """載入、清洗數據並計算指標 (MA10, MA20, RSI14, ATR14)。"""
         print(f"  StockTradingEnv ({self.stock_code}): 載入數據 {start_date} to {end_date}")
         try: start_dt_obj = pd.to_datetime(start_date, format='%Y%m%d'); buffer_days = 30; required_start_dt = start_dt_obj - pd.Timedelta(days=(self.window_size + buffer_days) * 1.5); required_start_date_str = required_start_dt.strftime('%Y%m%d')
         except ValueError: print(f"    錯誤：起始日期格式無效 {start_date}"); return None
         raw_data = self.api.Get_Stock_Informations(self.stock_code, required_start_date_str, end_date)
-        if not raw_data: print(f"    無法從 API 獲取 {self.stock_code} 的數據。"); return None
+        if not raw_data: return None
         try:
             df = pd.DataFrame(raw_data); df['date'] = pd.to_datetime(df['date'], unit='s'); df = df.sort_values('date').set_index('date')
             required_cols = ['open', 'high', 'low', 'close', 'turnover'];
-            if not all(col in df.columns for col in required_cols): print(f"    錯誤：{self.stock_code} 缺少必要欄位。"); return None
+            if not all(col in df.columns for col in required_cols): return None
             numeric_cols = ['open', 'high', 'low', 'close', 'turnover', 'capacity', 'transaction_volume']
             for col in numeric_cols:
                 if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
             if 'turnover' in df.columns and 'close' in df.columns: df['volume'] = np.where(df['close'].isna() | (df['close'] == 0), 0, df['turnover'] / df['close']); df['volume'] = df['volume'].fillna(0).replace([np.inf, -np.inf], 0).round().astype(np.int64)
             else: df['volume'] = 0
             indicator_base_cols = ['open', 'high', 'low', 'close']; df = df.dropna(subset=indicator_base_cols)
-            if df.empty: print(f"    {self.stock_code} 在移除 OHLC NaN 後為空。"); return None
-
-            # --- 修改: 計算 MA10, MA20, MA50 ---
+            if df.empty: return None
+            # --- 修改: 只計算 MA10, MA20 ---
             df.ta.sma(length=self.ma_short_period, close='close', append=True, col_names=(f'SMA_{self.ma_short_period}',))
             df.ta.sma(length=self.ma_medium_period, close='close', append=True, col_names=(f'SMA_{self.ma_medium_period}',))
-            df.ta.sma(length=self.ma_long_period, close='close', append=True, col_names=(f'SMA_{self.ma_long_period}',))
             # ---
             df.ta.rsi(length=self.rsi_period, close='close', append=True, col_names=(f'RSI_{self.rsi_period}',))
             df.ta.atr(length=self.atr_period, high='high', low='low', close='close', append=True, col_names=(f'ATR_{self.atr_period}',))
-            if f'ATR_{self.atr_period}' not in df.columns: print(f"    錯誤：ATR 指標未能成功計算 ({self.stock_code})。"); return None
+            if f'ATR_{self.atr_period}' not in df.columns: return None
             df[f'ATR_norm_{self.atr_period}'] = df[f'ATR_{self.atr_period}'] / df['close']; df[f'ATR_norm_{self.atr_period}'] = df[f'ATR_norm_{self.atr_period}'].replace([np.inf, -np.inf], 0)
-
-            df = df.dropna() # 移除所有指標計算產生的 NaN
-            if df.empty: print(f"    {self.stock_code} 在計算指標後為空。"); return None
+            df = df.dropna();
+            if df.empty: return None
             df_filtered = df[df.index >= start_dt_obj]
-            if len(df_filtered) < self.window_size : print(f"    警告：{self.stock_code} 數據不足 ({len(df_filtered)} < {self.window_size})。"); return None
+            if len(df_filtered) < self.window_size : return None
             print(f"    > {self.stock_code} 數據處理完成，用於模擬的數據: {len(df_filtered)} 行")
             return df_filtered
         except Exception as e: print(f"    StockTradingEnv ({self.stock_code}): 處理數據時出錯: {e}"); traceback.print_exc(); return None
 
     def _get_observation(self, step):
-        """計算觀察向量 (包含 MA10, MA20, MA50 相關特徵)。"""
+        """計算觀察向量 (包含 MA10, MA20 相關特徵)。"""
         if step < 0 or step >= len(self.data_df): return np.zeros(self.observation_shape, dtype=np.float32)
         try:
             obs_data = self.data_df.iloc[step]; close_price = obs_data['close']
-            # --- 獲取所有需要的指標值 ---
             atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0); atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
+            # --- 修改: 獲取 MA10, MA20 ---
             ma10_val = obs_data.get(f'SMA_{self.ma_short_period}', close_price)
             ma20_val = obs_data.get(f'SMA_{self.ma_medium_period}', close_price)
-            ma50_val = obs_data.get(f'SMA_{self.ma_long_period}', close_price)
+            # ---
             rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0)
-
-            # --- 計算特徵 ---
+            # --- 修改: 計算新的特徵 ---
             price_ma10_ratio = close_price / ma10_val if ma10_val != 0 else 1.0
             price_ma20_ratio = close_price / ma20_val if ma20_val != 0 else 1.0
-            price_ma50_ratio = close_price / ma50_val if ma50_val != 0 else 1.0
             ma10_ma20_ratio = ma10_val / ma20_val if ma20_val != 0 else 1.0
-            ma20_ma50_ratio = ma20_val / ma50_val if ma50_val != 0 else 1.0
+            # ---
             rsi_val = rsi_val_raw / 100.0
             holding_position = 1.0 if self.shares_held > 0 else 0.0
             potential_sl, potential_tp, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl = 0.0, 0.0, 0.0, 0.0, 0.0
@@ -161,21 +142,18 @@ class StockTradingEnv(gym.Env):
                 potential_sl = entry_p - self.sl_atr_multiplier * entry_a; potential_tp = entry_p + self.tp_atr_multiplier * entry_a
                 if close_price > 0: distance_to_sl_norm = (close_price - potential_sl) / close_price; distance_to_tp_norm = (potential_tp - close_price) / close_price
                 if close_price < potential_sl and potential_sl > 0: is_below_potential_sl = 1.0
-
-            # --- 修改: 組裝 11 個特徵 ---
+            # --- 修改: 組裝 9 個特徵 ---
             features = [
-                price_ma10_ratio, price_ma20_ratio, price_ma50_ratio, # Price vs MAs
-                ma10_ma20_ratio, ma20_ma50_ratio,                     # MA vs MA
-                rsi_val, atr_norm_val,                                # Oscillators/Vol
-                holding_position,                                     # Position Info
-                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl # SL/TP Info
+                price_ma10_ratio, price_ma20_ratio, # Price vs MAs (2)
+                ma10_ma20_ratio,                    # MA vs MA (1)
+                rsi_val, atr_norm_val,              # Oscillators/Vol (2)
+                holding_position,                   # Position Info (1)
+                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl # SL/TP Info (3)
             ]
-            observation = np.array(features, dtype=np.float32)
-            observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9); return observation
+            observation = np.array(features, dtype=np.float32); observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9); return observation
         except Exception as e: print(f"錯誤 ({self.stock_code}): Obs 未知錯誤 step {step}: {e}"); traceback.print_exc(); return np.zeros(self.observation_shape, dtype=np.float32)
 
     # _calculate_portfolio_value, reset, step, render, close 方法保持不變
-    # (因為它們不直接依賴於觀察空間的具體內容，step 中的獎勵計算邏輯也適用)
     def _calculate_portfolio_value(self, step):
         if step < 0 or step >= len(self.data_df): return self.portfolio_value
         close_price = self.data_df.iloc[step]['close']; stock_value = self.shares_held * close_price; return self.cash + stock_value
@@ -250,81 +228,69 @@ if __name__ == '__main__':
     RUN_TRAINING = True
     RUN_EVALUATION = False
 
-    # --- Training Parameters (Using Multi MA) ---
+    # --- Training Parameters (Using MA10/20) ---
     START_DATE_TRAIN = '20180101'
     END_DATE_TRAIN = '20231231'
-    INITIAL_CAPITAL_PER_MODEL = 500000000.0
+    INITIAL_CAPITAL_PER_MODEL = 5000000.0
     SHARES_PER_TRADE_TRAIN = 1000
     MA_SHORT_TRAIN = 10
+    MA_MEDIUM_TRAIN = 20 # <<<--- 新增中期參數 (雖然 Env 內部固定為 20)
     RSI_PERIOD_TRAIN = 14
     ATR_PERIOD_TRAIN = 14
-    SL_ATR_MULT_TRAIN = 2.0
-    TP_ATR_MULT_TRAIN = 3.0
-    # --- WINDOW_SIZE 會在 Env 內部根據 MA50 自動計算 ---
-    # --- 增加訓練步數以適應更複雜的狀態 ---
-    TOTAL_TIMESTEPS_PER_MODEL = 300000  # <<<--- 強烈建議增加步數
-    # --- 獎勵/懲罰係數 (可能需要重新調優) ---
+    SL_ATR_MULT_TRAIN = 1.0 # <<<--- 使用您上次實驗的參數
+    TP_ATR_MULT_TRAIN = 1.5 # <<<--- 使用您上次實驗的參數
+    # --- WINDOW_SIZE 會在 Env 內部基於 MA20 自動計算 ---
+    TOTAL_TIMESTEPS_PER_MODEL = 300000  # <<<--- 大幅增加步數
+    # --- 獎勵/懲罰係數 (沿用上次效果較好的參數) ---
     REWARD_SCALING_TRAIN = 1.0
     SL_PENALTY_FACTOR_TRAIN = 0.2
-    PROFIT_BONUS_FACTOR_TRAIN = 0.3
-    LOSS_PENALTY_FACTOR_TRAIN = 0.2 # 可以嘗試對稱或略高於盈利
+    PROFIT_BONUS_FACTOR_TRAIN = 0.4
+    LOSS_PENALTY_FACTOR_TRAIN = 0.1
     HOLDING_LOSS_PENALTY_TRAIN = 0.005
     TRANSACTION_PENALTY_TRAIN = 0.001
-    MAX_HOLDING_PENALTY_TRAIN = 0.05
+    MAX_HOLDING_PENALTY_TRAIN = 0.1
     HOLDING_PENALTY_INCREASE_RATE_TRAIN = 0.001
     # --- PPO 超參數 ---
-    PPO_ENT_COEF = 0.01 # 可以保持或略微調整
+    PPO_ENT_COEF = 0.015
     PPO_LEARNING_RATE = 0.0003
     PPO_N_STEPS = 2048
     PPO_BATCH_SIZE = 64
     # --- 輸出目錄 ---
-    experiment_name = "multi_ma_enhanced_reward_holding_penalty_v1" # 新實驗名稱
+    experiment_name = "ma10_ma20_reward_v2" # 新實驗名稱
     MODELS_SAVE_DIR = f"tuned_models/{TARGET_STOCK_CODE}/{experiment_name}"
     TENSORBOARD_LOG_DIR = f"./tuning_tensorboard/{TARGET_STOCK_CODE}/{experiment_name}/"
     MONITOR_LOG_DIR = os.path.join(TENSORBOARD_LOG_DIR, "monitor_logs")
 
     if RUN_TRAINING:
         print(f"\n=============== 開始單股票調試訓練 ({TARGET_STOCK_CODE} - {experiment_name}) ===============")
-        if 'StockTradingEnv' not in globals() or not hasattr(StockTradingEnv, 'step'):
-             print("\n錯誤：StockTradingEnv 類別未定義或不完整。\n"); exit()
+        if 'StockTradingEnv' not in globals() or not hasattr(StockTradingEnv, 'step'): print("\n錯誤：StockTradingEnv 類別未定義。\n"); exit()
         else:
-            os.makedirs(MODELS_SAVE_DIR, exist_ok=True)
-            os.makedirs(TENSORBOARD_LOG_DIR, exist_ok=True)
-            os.makedirs(MONITOR_LOG_DIR, exist_ok=True)
+            os.makedirs(MODELS_SAVE_DIR, exist_ok=True); os.makedirs(TENSORBOARD_LOG_DIR, exist_ok=True); os.makedirs(MONITOR_LOG_DIR, exist_ok=True)
             try:
                 env = StockTradingEnv(
                     stock_code=TARGET_STOCK_CODE, start_date=START_DATE_TRAIN, end_date=END_DATE_TRAIN,
-                    api_account=API_ACCOUNT, api_password=API_PASSWORD,
-                    initial_capital=INITIAL_CAPITAL_PER_MODEL, shares_per_trade=SHARES_PER_TRADE_TRAIN,
-                    ma_short=MA_SHORT_TRAIN, rsi_period=RSI_PERIOD_TRAIN, atr_period=ATR_PERIOD_TRAIN,
-                    sl_atr_multiplier=SL_ATR_MULT_TRAIN, tp_atr_multiplier=TP_ATR_MULT_TRAIN,
-                    # window_size 在 Env 內部計算
-                    reward_scaling=REWARD_SCALING_TRAIN, sl_penalty_factor=SL_PENALTY_FACTOR_TRAIN,
-                    profit_bonus_factor=PROFIT_BONUS_FACTOR_TRAIN, loss_penalty_factor=LOSS_PENALTY_FACTOR_TRAIN,
-                    holding_loss_penalty=HOLDING_LOSS_PENALTY_TRAIN, transaction_penalty=TRANSACTION_PENALTY_TRAIN,
-                    max_holding_penalty = MAX_HOLDING_PENALTY_TRAIN, holding_penalty_increase_rate = HOLDING_PENALTY_INCREASE_RATE_TRAIN,
-                    render_mode=None
-                )
-                monitor_path = os.path.join(MONITOR_LOG_DIR, f"{TARGET_STOCK_CODE}")
-                env = Monitor(env, monitor_path, allow_early_resets=True)
+                    api_account=API_ACCOUNT, api_password=API_PASSWORD, initial_capital=INITIAL_CAPITAL_PER_MODEL,
+                    shares_per_trade=SHARES_PER_TRADE_TRAIN, ma_short=MA_SHORT_TRAIN, ma_medium=MA_MEDIUM_TRAIN, # 傳遞 ma_medium
+                    rsi_period=RSI_PERIOD_TRAIN, atr_period=ATR_PERIOD_TRAIN, sl_atr_multiplier=SL_ATR_MULT_TRAIN,
+                    tp_atr_multiplier=TP_ATR_MULT_TRAIN, reward_scaling=REWARD_SCALING_TRAIN,
+                    sl_penalty_factor=SL_PENALTY_FACTOR_TRAIN, profit_bonus_factor=PROFIT_BONUS_FACTOR_TRAIN,
+                    loss_penalty_factor=LOSS_PENALTY_FACTOR_TRAIN, holding_loss_penalty=HOLDING_LOSS_PENALTY_TRAIN,
+                    transaction_penalty=TRANSACTION_PENALTY_TRAIN, max_holding_penalty = MAX_HOLDING_PENALTY_TRAIN,
+                    holding_penalty_increase_rate = HOLDING_PENALTY_INCREASE_RATE_TRAIN, render_mode=None )
+                monitor_path = os.path.join(MONITOR_LOG_DIR, f"{TARGET_STOCK_CODE}"); env = Monitor(env, monitor_path, allow_early_resets=True)
                 vec_env = DummyVecEnv([lambda: env])
-                model = PPO("MlpPolicy", vec_env, verbose=1,
-                            tensorboard_log=TENSORBOARD_LOG_DIR,
-                            seed=42, ent_coef=PPO_ENT_COEF, learning_rate=PPO_LEARNING_RATE,
-                            n_steps=PPO_N_STEPS, batch_size=PPO_BATCH_SIZE)
-
+                model = PPO("MlpPolicy", vec_env, verbose=1, tensorboard_log=TENSORBOARD_LOG_DIR, seed=42,
+                            ent_coef=PPO_ENT_COEF, learning_rate=PPO_LEARNING_RATE, n_steps=PPO_N_STEPS, batch_size=PPO_BATCH_SIZE)
                 print(f"  開始訓練 {TOTAL_TIMESTEPS_PER_MODEL} 步...")
-                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=1)
+                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=100) # 減少日誌頻率
                 print(f"  訓練完成。")
                 save_path = os.path.join(MODELS_SAVE_DIR, f"ppo_agent_{TARGET_STOCK_CODE}_final")
                 model.save(save_path); print(f"  最終模型已儲存: {save_path}.zip")
                 vec_env.close()
-
             except ValueError as e: print(f"股票 {TARGET_STOCK_CODE} 環境初始化或數據錯誤: {e}")
             except Exception as e: print(f"訓練股票 {TARGET_STOCK_CODE} 時發生未預期的錯誤: {e}"); traceback.print_exc();
-
         print("\n=============== 單股票調試訓練階段完成 ===============")
 
-    if RUN_EVALUATION: print("\n錯誤：此腳本僅用於訓練調試，不執行評估階段。")
+    if RUN_EVALUATION: print("\n錯誤：此腳本僅用於訓練調試。")
     if not RUN_TRAINING and not RUN_EVALUATION: print("\n請設置 RUN_TRAINING = True 來執行。")
     print("\n--- 程序執行完畢 ---")
