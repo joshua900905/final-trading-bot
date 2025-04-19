@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # evaluate_single_stock.py - Script for Evaluating a SINGLE Pre-trained Model
-# (Expects model trained with MA10, MA20, RSI14, ATR14 Features)
+# (Matches training with MA10, MA20, RSI14, ATR14 Features)
 
 import numpy as np
 import pandas as pd
@@ -35,21 +35,19 @@ class Stock_API:
     def Get_User_Stocks(self): print("警告：Get_User_Stocks 在純回測模式下不應被調用。"); return []
     def Buy_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Buy_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
     def Sell_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Sell_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
-
-
 # --- Refactored Evaluation Classes ---
 
 class DataManager:
     """負責加載、預處理和提供市場數據 (已適應新 API 格式, 使用 MA10, MA20)。"""
-    # --- 修改: __init__ 包含 MA10, MA20 ---
+    # --- 修改: __init__ 包含 ma_medium ---
     def __init__(self, stock_codes_initial, api, window_size,
                  ma_short=10, ma_medium=20, rsi_period=14, atr_period=14): # Removed ma_long
         self.stock_codes_initial = list(stock_codes_initial); self.api = api;
+        self.ma_short_period = ma_short; self.ma_medium_period = ma_medium; # Store medium period
+        self.rsi_period = rsi_period; self.atr_period = atr_period
         # --- 修改: window_size 基於 MA20 ---
         self.window_size = max(ma_short, ma_medium, rsi_period, atr_period) + 10
         # ---
-        self.ma_short_period = ma_short; self.ma_medium_period = ma_medium; # Store medium period
-        self.rsi_period = rsi_period; self.atr_period = atr_period
         self.data_dict = {}; self.common_dates = None; self.stock_codes = []
 
     def _load_and_preprocess_single_stock(self, stock_code, start_date, end_date):
@@ -149,7 +147,7 @@ class PortfolioManager:
 
 class TradeExecutor:
     """負責應用資金管理規則和【模擬】提交訂單（單股票版本，已修正縮排和 NameError）。"""
-    # (保持不變 - 純回測模式下邏輯正確)
+    # (保持不變)
     def __init__(self, api: Stock_API, portfolio_manager: PortfolioManager, data_manager: DataManager):
         self.api = api; self.portfolio_manager = portfolio_manager; self.data_manager = data_manager
     def place_sell_orders(self, sell_requests):
@@ -186,9 +184,9 @@ class TradeExecutor:
                      if final_sheets_to_buy > 0: target_sheets = final_sheets_to_buy; potential_cost = target_sheets * cost_per_sheet
                      else: continue
                 else: continue
-            final_cost = potential_cost
+            final_cost = potential_cost # Assign final calculated cost
             if target_sheets <= 0: continue;
-            if available_cash < final_cost: continue;
+            if available_cash < final_cost: continue; # Check cash against final cost
             shares_to_buy_api = target_sheets * 1000
             orders_to_submit_buy.append((code, shares_to_buy_api, price_T)); available_cash -= final_cost
         print("TradeExecutor: [BACKTEST] 模擬提交買單...")
@@ -197,6 +195,7 @@ class TradeExecutor:
 
 class SimulationEngine:
     """主回測引擎（單股票評估版本，使用 MA10/MA20）。"""
+    # --- 修改: __init__ 獲取所有 MA 週期 ---
     def __init__(self, start_date, end_date, data_manager: DataManager,
                  portfolio_manager: PortfolioManager, trade_executor: TradeExecutor,
                  models: dict, # {stock_code: model}
@@ -208,35 +207,29 @@ class SimulationEngine:
         if not self.target_stock_code or self.target_stock_code not in self.models: raise ValueError("目標股票代碼無效或缺少對應模型。")
         self.stock_codes = [self.target_stock_code]
         indicator_params = data_manager.get_indicator_periods()
-        # --- 修改: 獲取 MA10, MA20 週期 ---
         self.ma_short_period = indicator_params['ma_short']
-        self.ma_medium_period = indicator_params['ma_medium'] # Get medium period
-        # ---
+        self.ma_medium_period = indicator_params['ma_medium'] # <<<--- 獲取 MA20 週期
         self.rsi_period = indicator_params['rsi']; self.atr_period = indicator_params['atr']
         self.sl_multiplier = sl_multiplier; self.tp_multiplier = tp_multiplier
         # --- 修改: 觀察空間維度 ---
-        self.features_per_stock = 9 # Update dimension
+        self.features_per_stock = 9
         # ---
         self.portfolio_history = []; self.dates_history = []
 
+    # --- 修改: _get_single_stock_observation 計算 9 個特徵 ---
     def _get_single_stock_observation(self, stock_code, date_idx):
-        """計算單支股票的觀察狀態向量 (使用 MA10, MA20)。"""
         common_dates = self.data_manager.get_common_dates();
         if date_idx < 0 or date_idx >= len(common_dates): return np.zeros(self.features_per_stock, dtype=np.float32)
         current_date = common_dates[date_idx]; obs_data = self.data_manager.get_data_on_date(stock_code, current_date)
         if obs_data is None: return np.zeros(self.features_per_stock, dtype=np.float32)
         try:
             close_price = obs_data['close']; atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0); atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
-            # --- 修改: 獲取 MA10, MA20 ---
             ma10_val = obs_data.get(f'SMA_{self.ma_short_period}', close_price)
-            ma20_val = obs_data.get(f'SMA_{self.ma_medium_period}', close_price)
-            # ---
+            ma20_val = obs_data.get(f'SMA_{self.ma_medium_period}', close_price) # <<<--- 獲取 MA20 值
             rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0)
-            # --- 修改: 計算新的特徵組合 ---
             price_ma10_ratio = close_price / ma10_val if ma10_val != 0 else 1.0
-            price_ma20_ratio = close_price / ma20_val if ma20_val != 0 else 1.0
-            ma10_ma20_ratio = ma10_val / ma20_val if ma20_val != 0 else 1.0
-            # ---
+            price_ma20_ratio = close_price / ma20_val if ma20_val != 0 else 1.0 # <<<--- 計算 price/MA20
+            ma10_ma20_ratio = ma10_val / ma20_val if ma20_val != 0 else 1.0   # <<<--- 計算 MA10/MA20
             rsi_val = rsi_val_raw / 100.0
             holding_position = 1.0 if self.portfolio_manager.get_shares(stock_code) > 0 else 0.0
             potential_sl, potential_tp, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl = 0.0, 0.0, 0.0, 0.0, 0.0
@@ -246,20 +239,12 @@ class SimulationEngine:
                 if close_price > 0: distance_to_sl_norm = (close_price - potential_sl) / close_price; distance_to_tp_norm = (potential_tp - close_price) / close_price
                 if close_price < potential_sl and potential_sl > 0: is_below_potential_sl = 1.0
             # --- 修改: 組裝 9 個特徵 ---
-            stock_features = np.array([
-                price_ma10_ratio, price_ma20_ratio, # Price vs MAs (2)
-                ma10_ma20_ratio,                    # MA vs MA (1)
-                rsi_val, atr_norm_val,              # Oscillators/Vol (2)
-                holding_position,                   # Position Info (1)
-                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl # SL/TP Info (3)
-            ], dtype=np.float32)
-            # ---
+            stock_features = np.array([ price_ma10_ratio, price_ma20_ratio, ma10_ma20_ratio, rsi_val, atr_norm_val, holding_position, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl ], dtype=np.float32)
             stock_features = np.nan_to_num(stock_features, nan=0.0, posinf=1e9, neginf=-1e9); return stock_features
         except Exception as e: print(f"錯誤 ({stock_code}): Obs 未知錯誤 @ {current_date}: {e}"); traceback.print_exc(); return np.zeros(self.features_per_stock, dtype=np.float32)
 
-    # run_backtest, report_results, plot_performance 方法保持不變
+    # run_backtest, report_results, plot_performance 方法保持不變 (已修正縮排和 NameError)
     def run_backtest(self):
-        """執行單股票的回測循環 (純回測模式，已修正縮排)。"""
         if not self.data_manager.load_all_data(self.start_date_str, self.end_date_str): print("SimulationEngine: 數據初始化失敗。"); return
         if self.target_stock_code not in self.data_manager.get_stock_codes(): print(f"錯誤：目標股票 {self.target_stock_code} 的數據未能成功加載。"); return
         self.stock_codes = [self.target_stock_code]; self.portfolio_manager.stock_codes = self.stock_codes
@@ -335,22 +320,22 @@ if __name__ == '__main__':
      TARGET_STOCK_CODE_EVAL = '2330'
      EVAL_START_DATE = '20230101'
      EVAL_END_DATE = '20231231'
-     TOTAL_INITIAL_CAPITAL = 5000000.0
+     TOTAL_INITIAL_CAPITAL = 50000000.0
      # --- 修改: 指向 MA10/MA20 模型目錄 ---
      # !!! 確保這個目錄與您訓練 MA10/MA20 模型時使用的目錄一致 !!!
-     EXPERIMENT_NAME = "ma10_ma20_reward_v2" # <<<--- 假設這是您訓練時的實驗名
+     EXPERIMENT_NAME = "ma10ma20_reward_v3_trend_bonus" # <<<--- 確認實驗名稱
      MODELS_BASE_DIR = f"tuned_models/{TARGET_STOCK_CODE_EVAL}/{EXPERIMENT_NAME}"
      MODEL_FILE_NAME = f"ppo_agent_{TARGET_STOCK_CODE_EVAL}_final.zip"
-     MODEL_LOAD_PATH = os.path.join(MODELS_BASE_DIR, MODEL_FILE_NAME) # 模型直接在實驗目錄下
+     MODEL_LOAD_PATH = os.path.join(MODELS_BASE_DIR, MODEL_FILE_NAME)
      # ---
 
      # --- 指標和窗口參數 (必須與訓練時完全一致) ---
-     MA_SHORT_TRAIN = 10
-     MA_MEDIUM_TRAIN = 20 # <<<--- 新增中期參數 (雖然 Env 內部固定為 20)
-     RSI_PERIOD_TRAIN = 14
-     ATR_PERIOD_TRAIN = 14
-     SL_ATR_MULT_TRAIN = 1.5 # <<<--- 使用您上次實驗的參數
-     TP_ATR_MULT_TRAIN = 2.5 # <<<--- 使用您上次實驗的參數
+     MA_SHORT = 10
+     MA_MEDIUM = 20 # <<<--- 新增中期參數
+     RSI_PERIOD = 14
+     ATR_PERIOD = 14
+     SL_ATR_MULT = 1.0 # <<<--- 確保與訓練時一致
+     TP_ATR_MULT = 1.5 # <<<--- 確保與訓練時一致
      # --- 修改: 窗口大小基於 MA20 ---
      WINDOW_SIZE = max(MA_SHORT, MA_MEDIUM, RSI_PERIOD, ATR_PERIOD) + 10
      # ---
@@ -361,6 +346,7 @@ if __name__ == '__main__':
      if RUN_TRAINING: print("錯誤：此腳本僅用於單股票評估。")
      if RUN_EVALUATION:
         print(f"\n=============== 開始單股票回測 ({TARGET_STOCK_CODE_EVAL} - MA10/20 Model) ===============")
+        print(f"嘗試加載模型: {MODEL_LOAD_PATH}") # 打印路徑以確認
         if not os.path.exists(MODEL_LOAD_PATH): print(f"錯誤：找不到模型文件 '{MODEL_LOAD_PATH}'。"); exit()
         else:
              print("--- 初始化評估組件 ---")
@@ -377,11 +363,12 @@ if __name__ == '__main__':
                  models_eval = {}; print(f"--- 從 '{MODEL_LOAD_PATH}' 加載預訓練模型 ---");
                  try: models_eval[TARGET_STOCK_CODE_EVAL] = PPO.load(MODEL_LOAD_PATH); print(f"  > 已成功加載模型: {TARGET_STOCK_CODE_EVAL}")
                  except Exception as e: print(f"加載模型 {TARGET_STOCK_CODE_EVAL} 失敗: {e}"); exit()
+
                  # --- 修改: SimulationEngine 初始化傳遞一致的 SL/TP 乘數 ---
                  simulation_engine = SimulationEngine(
                      start_date=EVAL_START_DATE, end_date=EVAL_END_DATE, data_manager=data_manager_eval,
                      portfolio_manager=portfolio_manager_eval, trade_executor=trade_executor_eval, models=models_eval,
-                     sl_multiplier=SL_ATR_MULT, tp_multiplier=TP_ATR_MULT # 確保這裡的值與訓練時計算觀察值用的一致
+                     sl_multiplier=SL_ATR_MULT, tp_multiplier=TP_ATR_MULT # 使用參數
                  )
                  # ---
                  simulation_engine.run_backtest()

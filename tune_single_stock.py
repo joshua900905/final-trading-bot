@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# tune_single_stock.py - Script for Training a SINGLE Stock Model for Parameter Tuning
-# (MA10, MA20, RSI14, ATR14, Enhanced Reward + Holding Penalty, Monitor)
+# train_models_final.py - Script for Training Individual Stock Models
+# (MA10, MA20, RSI14, ATR14, Enhanced Reward + Holding Penalty + Trend Bonus, Monitor)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -39,54 +39,43 @@ class Stock_API:
     def Buy_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Buy_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
     def Sell_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Sell_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
 
-# --- StockTradingEnv Class (Single-Stock Training Environment - MA10/20 Features) ---
+# --- StockTradingEnv Class (Single-Stock Training Environment - Final Version) ---
 class StockTradingEnv(gym.Env):
     """
     用於獨立訓練單支股票模型的 Gymnasium 環境。
-    (使用 MA10, MA20, 增強獎勵 + 不作為懲罰)
+    (MA10, MA20, 增強獎勵 + 不作為懲罰 + 順勢持倉獎勵)
     """
     metadata = {'render_modes': ['human', None], 'render_fps': 1}
-
-    # --- 修改: 移除 ma_long, 更新 window_size 計算方式, 更新 observation_shape ---
     def __init__(self, stock_code, start_date, end_date, api_account, api_password,
                  initial_capital=1000000, shares_per_trade=1000,
-                 ma_short=10, ma_medium=20, rsi_period=14, atr_period=14, # MA20 固定
+                 ma_short=10, ma_medium=20, rsi_period=14, atr_period=14,
                  sl_atr_multiplier=2.0, tp_atr_multiplier=3.0,
+                 window_size=60, # Will be recalculated
                  reward_scaling=1.0, sl_penalty_factor=0.5, profit_bonus_factor=0.1,
                  loss_penalty_factor=0.2, holding_loss_penalty=0.01, transaction_penalty=0.005,
                  max_holding_penalty = 0.1, holding_penalty_increase_rate = 0.001,
+                 holding_trend_bonus_factor = 0.005,
                  render_mode=None):
-        super().__init__()
-        self.stock_code = stock_code; self.start_date_str = start_date; self.end_date_str = end_date
+        super().__init__(); self.stock_code = stock_code; self.start_date_str = start_date; self.end_date_str = end_date
         self.api = Stock_API(api_account, api_password); self.initial_capital = initial_capital; self.shares_per_trade = shares_per_trade
-        self.ma_short_period = ma_short
-        self.ma_medium_period = ma_medium # 使用中期均線
-        self.rsi_period = rsi_period; self.atr_period = atr_period
+        self.ma_short_period = ma_short; self.ma_medium_period = ma_medium; self.rsi_period = rsi_period; self.atr_period = atr_period
         self.sl_atr_multiplier = sl_atr_multiplier; self.tp_atr_multiplier = tp_atr_multiplier
-        # --- 修改: window_size 基於 MA20 ---
         self.window_size = max(self.ma_short_period, self.ma_medium_period, self.rsi_period, self.atr_period) + 10
-
         self.reward_scaling = reward_scaling; self.sl_penalty_factor = sl_penalty_factor; self.profit_bonus_factor = profit_bonus_factor
         self.loss_penalty_factor = loss_penalty_factor; self.holding_loss_penalty = holding_loss_penalty; self.transaction_penalty = transaction_penalty
         self.max_holding_penalty = max_holding_penalty; self.holding_penalty_increase_rate = holding_penalty_increase_rate
+        self.holding_trend_bonus_factor = holding_trend_bonus_factor
         self.render_mode = render_mode
-
         self.data_df = self._load_and_preprocess_data(start_date, end_date)
         if self.data_df is None or len(self.data_df) < self.window_size: actual_len = len(self.data_df) if self.data_df is not None else 0; raise ValueError(f"股票 {stock_code} 數據不足 (需 {self.window_size}, 實 {actual_len})")
         self.end_step = len(self.data_df) - 1; self.action_space = spaces.Discrete(3)
-
-        # --- 修改: 觀察空間維度變為 9 ---
-        self.features_per_stock = 9
-        self.observation_shape = (self.features_per_stock,)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=self.observation_shape, dtype=np.float32)
-        # ---
-
+        self.features_per_stock = 9 # MA10/Price, MA20/Price, MA10/MA20, RSI, ATRn, Hold, SL, TP, BelowSL
+        self.observation_shape = (self.features_per_stock,); self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=self.observation_shape, dtype=np.float32)
         self.current_step = 0; self.cash = 0.0; self.shares_held = 0; self.entry_price = 0.0; self.entry_atr = 0.0; self.portfolio_value = 0.0; self.done = False
         self.consecutive_hold_days = 0
 
     def _load_and_preprocess_data(self, start_date, end_date):
-        """載入、清洗數據並計算指標 (MA10, MA20, RSI14, ATR14)。"""
-        print(f"  StockTradingEnv ({self.stock_code}): 載入數據 {start_date} to {end_date}")
+        # print(f"  StockTradingEnv ({self.stock_code}): 載入數據 {start_date} to {end_date}")
         try: start_dt_obj = pd.to_datetime(start_date, format='%Y%m%d'); buffer_days = 30; required_start_dt = start_dt_obj - pd.Timedelta(days=(self.window_size + buffer_days) * 1.5); required_start_date_str = required_start_dt.strftime('%Y%m%d')
         except ValueError: print(f"    錯誤：起始日期格式無效 {start_date}"); return None
         raw_data = self.api.Get_Stock_Informations(self.stock_code, required_start_date_str, end_date)
@@ -102,10 +91,8 @@ class StockTradingEnv(gym.Env):
             else: df['volume'] = 0
             indicator_base_cols = ['open', 'high', 'low', 'close']; df = df.dropna(subset=indicator_base_cols)
             if df.empty: return None
-            # --- 修改: 只計算 MA10, MA20 ---
             df.ta.sma(length=self.ma_short_period, close='close', append=True, col_names=(f'SMA_{self.ma_short_period}',))
             df.ta.sma(length=self.ma_medium_period, close='close', append=True, col_names=(f'SMA_{self.ma_medium_period}',))
-            # ---
             df.ta.rsi(length=self.rsi_period, close='close', append=True, col_names=(f'RSI_{self.rsi_period}',))
             df.ta.atr(length=self.atr_period, high='high', low='low', close='close', append=True, col_names=(f'ATR_{self.atr_period}',))
             if f'ATR_{self.atr_period}' not in df.columns: return None
@@ -114,26 +101,20 @@ class StockTradingEnv(gym.Env):
             if df.empty: return None
             df_filtered = df[df.index >= start_dt_obj]
             if len(df_filtered) < self.window_size : return None
-            print(f"    > {self.stock_code} 數據處理完成，用於模擬的數據: {len(df_filtered)} 行")
+            # print(f"    > {self.stock_code} 數據處理完成，用於模擬的數據: {len(df_filtered)} 行")
             return df_filtered
         except Exception as e: print(f"    StockTradingEnv ({self.stock_code}): 處理數據時出錯: {e}"); traceback.print_exc(); return None
-
     def _get_observation(self, step):
-        """計算觀察向量 (包含 MA10, MA20 相關特徵)。"""
         if step < 0 or step >= len(self.data_df): return np.zeros(self.observation_shape, dtype=np.float32)
         try:
             obs_data = self.data_df.iloc[step]; close_price = obs_data['close']
             atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0); atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
-            # --- 修改: 獲取 MA10, MA20 ---
             ma10_val = obs_data.get(f'SMA_{self.ma_short_period}', close_price)
             ma20_val = obs_data.get(f'SMA_{self.ma_medium_period}', close_price)
-            # ---
             rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0)
-            # --- 修改: 計算新的特徵 ---
             price_ma10_ratio = close_price / ma10_val if ma10_val != 0 else 1.0
             price_ma20_ratio = close_price / ma20_val if ma20_val != 0 else 1.0
             ma10_ma20_ratio = ma10_val / ma20_val if ma20_val != 0 else 1.0
-            # ---
             rsi_val = rsi_val_raw / 100.0
             holding_position = 1.0 if self.shares_held > 0 else 0.0
             potential_sl, potential_tp, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl = 0.0, 0.0, 0.0, 0.0, 0.0
@@ -142,18 +123,9 @@ class StockTradingEnv(gym.Env):
                 potential_sl = entry_p - self.sl_atr_multiplier * entry_a; potential_tp = entry_p + self.tp_atr_multiplier * entry_a
                 if close_price > 0: distance_to_sl_norm = (close_price - potential_sl) / close_price; distance_to_tp_norm = (potential_tp - close_price) / close_price
                 if close_price < potential_sl and potential_sl > 0: is_below_potential_sl = 1.0
-            # --- 修改: 組裝 9 個特徵 ---
-            features = [
-                price_ma10_ratio, price_ma20_ratio, # Price vs MAs (2)
-                ma10_ma20_ratio,                    # MA vs MA (1)
-                rsi_val, atr_norm_val,              # Oscillators/Vol (2)
-                holding_position,                   # Position Info (1)
-                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl # SL/TP Info (3)
-            ]
+            features = [ price_ma10_ratio, price_ma20_ratio, ma10_ma20_ratio, rsi_val, atr_norm_val, holding_position, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl ]
             observation = np.array(features, dtype=np.float32); observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9); return observation
         except Exception as e: print(f"錯誤 ({self.stock_code}): Obs 未知錯誤 step {step}: {e}"); traceback.print_exc(); return np.zeros(self.observation_shape, dtype=np.float32)
-
-    # _calculate_portfolio_value, reset, step, render, close 方法保持不變
     def _calculate_portfolio_value(self, step):
         if step < 0 or step >= len(self.data_df): return self.portfolio_value
         close_price = self.data_df.iloc[step]['close']; stock_value = self.shares_held * close_price; return self.cash + stock_value
@@ -209,6 +181,18 @@ class StockTradingEnv(gym.Env):
         if action == 0 or placed_order_type == 'hold_invalid_condition':
             current_holding_penalty = min(self.consecutive_hold_days * self.holding_penalty_increase_rate, self.max_holding_penalty)
             reward -= current_holding_penalty
+        # --- 添加順勢持倉獎勵 ---
+        holding_trend_bonus = 0.0
+        if self.shares_held > 0: # 如果 T+1 結算後仍持有多頭
+            current_data = self.data_df.iloc[self.current_step if not terminated else self.current_step -1]
+            close_price_now = current_data['close']
+            ma10_now = current_data.get(f'SMA_{self.ma_short_period}', close_price_now)
+            ma20_now = current_data.get(f'SMA_{self.ma_medium_period}', close_price_now)
+            is_uptrend = close_price_now > ma10_now and ma10_now > ma20_now # 簡單上升趨勢定義
+            if is_uptrend:
+                holding_trend_bonus = self.holding_trend_bonus_factor
+        reward += holding_trend_bonus
+        # ---
         reward *= self.reward_scaling
         observation = self._get_observation(self.current_step if not terminated else self.current_step - 1); self.done = terminated
         info = { "step": self.current_step, "portfolio_value": self.portfolio_value, "cash": self.cash, "shares_held": self.shares_held, "placed_order_type": placed_order_type, "trade_executed (simulated)": trade_executed, "reward": reward, "realized_pnl": realized_pnl, "hold_days": self.consecutive_hold_days}
@@ -216,48 +200,44 @@ class StockTradingEnv(gym.Env):
     def render(self, info=None): pass
     def close(self): pass
 
-
 # --- Main Execution Block for Single Stock Tuning ---
 if __name__ == '__main__':
 
     # --- Configuration ---
     API_ACCOUNT = "N26132089"
     API_PASSWORD = "joshua900905"
-    TARGET_STOCK_CODE = '2454'
+    TARGET_STOCK_CODE = '2330'
 
     RUN_TRAINING = True
     RUN_EVALUATION = False
 
-    # --- Training Parameters (Using MA10/20) ---
-    START_DATE_TRAIN = '20160101'
-    END_DATE_TRAIN = '20201231'
-    INITIAL_CAPITAL_PER_MODEL = 5000000.0
+    # --- Training Parameters (MA10/20, Enhanced Rewards + Holding Penalty + Trend Bonus) ---
+    START_DATE_TRAIN = '20180101'
+    END_DATE_TRAIN = '20231231'
+    INITIAL_CAPITAL_PER_MODEL = 50000000.0
     SHARES_PER_TRADE_TRAIN = 1000
     MA_SHORT_TRAIN = 10
-    MA_MEDIUM_TRAIN = 20 # <<<--- 新增中期參數 (雖然 Env 內部固定為 20)
+    MA_MEDIUM_TRAIN = 20
     RSI_PERIOD_TRAIN = 14
     ATR_PERIOD_TRAIN = 14
-    SL_ATR_MULT_TRAIN = 1.5 # <<<--- 使用您上次實驗的參數
-    TP_ATR_MULT_TRAIN = 2.5 # <<<--- 使用您上次實驗的參數
-    # --- WINDOW_SIZE 會在 Env 內部基於 MA20 自動計算 ---
-    TOTAL_TIMESTEPS_PER_MODEL = 100000  # <<<--- 大幅增加步數
-    # --- 獎勵/懲罰係數 (沿用上次效果較好的參數) ---
+    SL_ATR_MULT_TRAIN = 1.0
+    TP_ATR_MULT_TRAIN = 1.5
+    # WINDOW_SIZE is calculated in Env now
+    TOTAL_TIMESTEPS_PER_MODEL = 300000
     REWARD_SCALING_TRAIN = 1.0
-    SL_PENALTY_FACTOR_TRAIN = 0.15  # <<<--- 進一步降低 SL 狀態懲罰
-    PROFIT_BONUS_FACTOR_TRAIN = 0.5  # <<<--- 保持或略微降低盈利獎勵
-    LOSS_PENALTY_FACTOR_TRAIN = 0.15 # <<<--- 保持較低的虧損懲罰
-    HOLDING_LOSS_PENALTY_TRAIN = 0.002 # <<<--- 非常低的持有虧損懲罰
-    TRANSACTION_PENALTY_TRAIN = 0.001  # <<<--- 保持較低的交易成本懲罰
-    MAX_HOLDING_PENALTY_TRAIN = 0.35   # <<<--- 降低不作為懲罰上限
-    HOLDING_PENALTY_INCREASE_RATE_TRAIN = 0.05 # <<<--- 減慢不作為懲罰增長
-
-    # --- PPO 超參數 ---
-    PPO_ENT_COEF = 0.015
+    SL_PENALTY_FACTOR_TRAIN = 0.2
+    PROFIT_BONUS_FACTOR_TRAIN = 0.3
+    LOSS_PENALTY_FACTOR_TRAIN = 0.3 # Match profit bonus or slightly higher
+    HOLDING_LOSS_PENALTY_TRAIN = 0.005
+    TRANSACTION_PENALTY_TRAIN = 0.001
+    MAX_HOLDING_PENALTY_TRAIN = 0.05
+    HOLDING_PENALTY_INCREASE_RATE_TRAIN = 0.001
+    HOLDING_TREND_BONUS_FACTOR_TRAIN = 0.01 # Bonus for holding in uptrend
+    PPO_ENT_COEF = 0.01
     PPO_LEARNING_RATE = 0.0003
     PPO_N_STEPS = 2048
     PPO_BATCH_SIZE = 64
-    # --- 輸出目錄 ---
-    experiment_name = "ma10_ma20_reward_v2" # 新實驗名稱
+    experiment_name = "ma10ma20_reward_v3_trend_bonus" # Experiment name
     MODELS_SAVE_DIR = f"tuned_models/{TARGET_STOCK_CODE}/{experiment_name}"
     TENSORBOARD_LOG_DIR = f"./tuning_tensorboard/{TARGET_STOCK_CODE}/{experiment_name}/"
     MONITOR_LOG_DIR = os.path.join(TENSORBOARD_LOG_DIR, "monitor_logs")
@@ -271,19 +251,21 @@ if __name__ == '__main__':
                 env = StockTradingEnv(
                     stock_code=TARGET_STOCK_CODE, start_date=START_DATE_TRAIN, end_date=END_DATE_TRAIN,
                     api_account=API_ACCOUNT, api_password=API_PASSWORD, initial_capital=INITIAL_CAPITAL_PER_MODEL,
-                    shares_per_trade=SHARES_PER_TRADE_TRAIN, ma_short=MA_SHORT_TRAIN, ma_medium=MA_MEDIUM_TRAIN, # 傳遞 ma_medium
+                    shares_per_trade=SHARES_PER_TRADE_TRAIN, ma_short=MA_SHORT_TRAIN, ma_medium=MA_MEDIUM_TRAIN,
                     rsi_period=RSI_PERIOD_TRAIN, atr_period=ATR_PERIOD_TRAIN, sl_atr_multiplier=SL_ATR_MULT_TRAIN,
-                    tp_atr_multiplier=TP_ATR_MULT_TRAIN, reward_scaling=REWARD_SCALING_TRAIN,
-                    sl_penalty_factor=SL_PENALTY_FACTOR_TRAIN, profit_bonus_factor=PROFIT_BONUS_FACTOR_TRAIN,
-                    loss_penalty_factor=LOSS_PENALTY_FACTOR_TRAIN, holding_loss_penalty=HOLDING_LOSS_PENALTY_TRAIN,
-                    transaction_penalty=TRANSACTION_PENALTY_TRAIN, max_holding_penalty = MAX_HOLDING_PENALTY_TRAIN,
-                    holding_penalty_increase_rate = HOLDING_PENALTY_INCREASE_RATE_TRAIN, render_mode=None )
+                    tp_atr_multiplier=TP_ATR_MULT_TRAIN, # window_size calculated inside Env
+                    reward_scaling=REWARD_SCALING_TRAIN, sl_penalty_factor=SL_PENALTY_FACTOR_TRAIN,
+                    profit_bonus_factor=PROFIT_BONUS_FACTOR_TRAIN, loss_penalty_factor=LOSS_PENALTY_FACTOR_TRAIN,
+                    holding_loss_penalty=HOLDING_LOSS_PENALTY_TRAIN, transaction_penalty=TRANSACTION_PENALTY_TRAIN,
+                    max_holding_penalty = MAX_HOLDING_PENALTY_TRAIN, holding_penalty_increase_rate = HOLDING_PENALTY_INCREASE_RATE_TRAIN,
+                    holding_trend_bonus_factor = HOLDING_TREND_BONUS_FACTOR_TRAIN, render_mode=None )
                 monitor_path = os.path.join(MONITOR_LOG_DIR, f"{TARGET_STOCK_CODE}"); env = Monitor(env, monitor_path, allow_early_resets=True)
                 vec_env = DummyVecEnv([lambda: env])
                 model = PPO("MlpPolicy", vec_env, verbose=1, tensorboard_log=TENSORBOARD_LOG_DIR, seed=42,
                             ent_coef=PPO_ENT_COEF, learning_rate=PPO_LEARNING_RATE, n_steps=PPO_N_STEPS, batch_size=PPO_BATCH_SIZE)
+
                 print(f"  開始訓練 {TOTAL_TIMESTEPS_PER_MODEL} 步...")
-                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=1) # 減少日誌頻率
+                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=100) # Log every 100 updates
                 print(f"  訓練完成。")
                 save_path = os.path.join(MODELS_SAVE_DIR, f"ppo_agent_{TARGET_STOCK_CODE}_final")
                 model.save(save_path); print(f"  最終模型已儲存: {save_path}.zip")
