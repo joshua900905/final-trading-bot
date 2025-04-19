@@ -345,12 +345,12 @@ if __name__ == '__main__':
      # ---
 
      # --- 指標和窗口參數 (必須與訓練時完全一致) ---
-     MA_SHORT = 10
-     MA_MEDIUM = 20 # <<<--- 新增中期參數
-     RSI_PERIOD = 14
-     ATR_PERIOD = 14
-     SL_ATR_MULT = 1.0 # <<<--- 確保與訓練時一致
-     TP_ATR_MULT = 1.5 # <<<--- 確保與訓練時一致
+     MA_SHORT_TRAIN = 10
+     MA_MEDIUM_TRAIN = 20 # <<<--- 新增中期參數 (雖然 Env 內部固定為 20)
+     RSI_PERIOD_TRAIN = 14
+     ATR_PERIOD_TRAIN = 14
+     SL_ATR_MULT_TRAIN = 1.5 # <<<--- 使用您上次實驗的參數
+     TP_ATR_MULT_TRAIN = 2.5 # <<<--- 使用您上次實驗的參數
      # --- 修改: 窗口大小基於 MA20 ---
      WINDOW_SIZE = max(MA_SHORT, MA_MEDIUM, RSI_PERIOD, ATR_PERIOD) + 10
      # ---
