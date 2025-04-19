@@ -355,31 +355,35 @@ class SimulationEngine:
 
 if __name__ == '__main__':
      # --- !!! 重要：請替換為您的 API 憑證 !!! ---
-     API_ACCOUNT = "N26132089"
-     API_PASSWORD = "joshua900905"
+     API_ACCOUNT = "N26132089" # 使用您提供的帳號
+     API_PASSWORD = "joshua900905" # 使用您提供的密碼
 
      # --- 要評估的單支股票 ---
      TARGET_STOCK_CODE_EVAL = '2330' # <<<--- 確保這裡的代碼正確
 
      # --- 評估參數 ---
-     EVAL_START_DATE = '20180101'
-     EVAL_END_DATE = '20250417'
-     TOTAL_INITIAL_CAPITAL = 500000000.0
+     EVAL_START_DATE = '20180101' # 您使用的評估起始日期
+     EVAL_END_DATE = '20250417' # 您使用的評估結束日期
+     TOTAL_INITIAL_CAPITAL = 500000000.0 # 您使用的初始資金
 
      # --- 修改: 指向正確的模型加載目錄和文件名格式 ---
-     # 基礎目錄現在是 'tuned_models'
+     # 基礎目錄
      MODELS_BASE_DIR = "tuned_models"
-     # 完整的文件路徑
-     MODEL_FILE_NAME = f"ppo_agent_{TARGET_STOCK_CODE_EVAL}_final.zip" # 使用您截圖中看到的文件名格式
-     MODEL_LOAD_PATH = os.path.join(MODELS_BASE_DIR, TARGET_STOCK_CODE_EVAL, MODEL_FILE_NAME)
+     # !!! 新增: 您在 tune_single_stock.py 中使用的實驗名稱 !!!
+     # !!! 請確保這個名稱與您訓練時使用的 TENSORBOARD_LOG_DIR 和 MODELS_SAVE_DIR 中的名稱一致 !!!
+     EXPERIMENT_NAME = "ma10_enhanced_reward_with_holding_penalty_v1" # <<<--- 確認這個名稱是否正確
+     # 模型文件名格式
+     MODEL_FILE_NAME = f"ppo_agent_{TARGET_STOCK_CODE_EVAL}_final.zip"
+     # --- 修改: 拼接正確的完整路徑，包含實驗名稱子目錄 ---
+     MODEL_LOAD_PATH = os.path.join(MODELS_BASE_DIR, TARGET_STOCK_CODE_EVAL, EXPERIMENT_NAME, MODEL_FILE_NAME)
      # --- 修改結束 ---
 
      # --- 指標和窗口參數 (必須與訓練時完全一致) ---
      MA_SHORT = 10
      RSI_PERIOD = 14
      ATR_PERIOD = 14
-     SL_ATR_MULT = 2.0
-     TP_ATR_MULT = 3.0
+     SL_ATR_MULT = 2.0 # <<<--- 確保與訓練時計算觀察值用的 sl_atr_multiplier 一致
+     TP_ATR_MULT = 3.0 # <<<--- 確保與訓練時計算觀察值用的 tp_atr_multiplier 一致
      WINDOW_SIZE = max(MA_SHORT, RSI_PERIOD, ATR_PERIOD) + 10
 
      # --- Phase Selection ---
@@ -390,46 +394,31 @@ if __name__ == '__main__':
      if RUN_EVALUATION:
         print(f"\n=============== 開始單股票回測 ({TARGET_STOCK_CODE_EVAL}) ===============")
 
-        # --- 修改: 使用拼接好的 MODEL_LOAD_PATH ---
+        # --- 使用拼接好的 MODEL_LOAD_PATH ---
+        print(f"嘗試加載模型: {MODEL_LOAD_PATH}") # 打印路徑以確認
         if not os.path.exists(MODEL_LOAD_PATH):
-             print(f"錯誤：找不到模型文件 '{MODEL_LOAD_PATH}'。請確保已為 {TARGET_STOCK_CODE_EVAL} 訓練並保存模型到正確位置。")
-             # 打印當前目錄下的文件結構以幫助調試
-             print("\n當前目錄結構:")
-             
-             exit() # 如果找不到模型文件，直接退出
+             print(f"錯誤：找不到模型文件 '{MODEL_LOAD_PATH}'。請檢查：")
+             print(f"1. 基礎目錄 '{MODELS_BASE_DIR}' 是否正確？")
+             print(f"2. 股票子目錄 '{TARGET_STOCK_CODE_EVAL}' 是否存在？")
+             print(f"3. 實驗名稱子目錄 '{EXPERIMENT_NAME}' 是否正確且存在？")
+             print(f"4. 模型文件名 '{MODEL_FILE_NAME}' 是否正確？")
+             print("\n當前工作目錄下的 tuned_models 結構:")
+             exit()
         else:
              # --- 創建組件 ---
              print("--- 初始化評估組件 ---")
+             # ... (後續創建組件和運行引擎的代碼保持不變) ...
              api_eval = Stock_API(API_ACCOUNT, API_PASSWORD)
              data_manager_eval = DataManager( stock_codes_initial=[TARGET_STOCK_CODE_EVAL], api=api_eval, window_size=WINDOW_SIZE, ma_short=MA_SHORT, rsi_period=RSI_PERIOD, atr_period=ATR_PERIOD )
-
              if data_manager_eval.load_all_data(EVAL_START_DATE, EVAL_END_DATE):
                  portfolio_manager_eval = PortfolioManager( initial_capital=TOTAL_INITIAL_CAPITAL, stock_codes=data_manager_eval.get_stock_codes() )
                  trade_executor_eval = TradeExecutor( api=api_eval, portfolio_manager=portfolio_manager_eval, data_manager=data_manager_eval )
-
-                 # --- 加載單個模型 ---
-                 models_eval = {}
-                 print(f"--- 從 '{MODEL_LOAD_PATH}' 加載預訓練模型 ---")
-                 try:
-                      # --- 修改: 使用 MODEL_LOAD_PATH 加載 ---
-                      models_eval[TARGET_STOCK_CODE_EVAL] = PPO.load(MODEL_LOAD_PATH)
-                      print(f"  > 已成功加載模型: {TARGET_STOCK_CODE_EVAL}")
-                 except Exception as e:
-                      print(f"加載模型 {TARGET_STOCK_CODE_EVAL} 失敗: {e}"); exit()
-
-                 # --- 創建並運行引擎 ---
-                 simulation_engine = SimulationEngine(
-                     start_date=EVAL_START_DATE, end_date=EVAL_END_DATE,
-                     data_manager=data_manager_eval,
-                     portfolio_manager=portfolio_manager_eval,
-                     trade_executor=trade_executor_eval,
-                     models=models_eval,
-                     sl_multiplier=SL_ATR_MULT,
-                     tp_multiplier=TP_ATR_MULT
-                 )
+                 models_eval = {}; print(f"--- 從 '{MODEL_LOAD_PATH}' 加載預訓練模型 ---");
+                 try: models_eval[TARGET_STOCK_CODE_EVAL] = PPO.load(MODEL_LOAD_PATH); print(f"  > 已成功加載模型: {TARGET_STOCK_CODE_EVAL}")
+                 except Exception as e: print(f"加載模型 {TARGET_STOCK_CODE_EVAL} 失敗: {e}"); exit()
+                 simulation_engine = SimulationEngine( start_date=EVAL_START_DATE, end_date=EVAL_END_DATE, data_manager=data_manager_eval, portfolio_manager=portfolio_manager_eval, trade_executor=trade_executor_eval, models=models_eval, sl_multiplier=SL_ATR_MULT, tp_multiplier=TP_ATR_MULT )
                  simulation_engine.run_backtest()
-             else:
-                  print("數據管理器初始化失敗，無法進行評估。")
+             else: print("數據管理器初始化失敗，無法進行評估。")
         print("\n=============== 單股票回測完成 ===============")
 
      if not RUN_TRAINING and not RUN_EVALUATION: print("\n請設置 RUN_EVALUATION=True 來執行回測。")
