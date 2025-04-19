@@ -277,8 +277,8 @@ class StockTradingEnv(gym.Env):
 if __name__ == '__main__':
 
     # --- Configuration ---
-    API_ACCOUNT = "YOUR_API_ACCOUNT" # <<<--- 修改
-    API_PASSWORD = "YOUR_API_PASSWORD" # <<<--- 修改
+    API_ACCOUNT = "N26132089"
+    API_PASSWORD = "joshua900905"
     STOCK_CODES_LIST = ['2330','2454','2317','2308','2881','2891','2382','2303','2882','2412',
                        '2886','3711','2884','2357','1216','2885','3034','3231','2892','2345']
 

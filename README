@@ -1,6 +1,5 @@
 !git clone https://github.com/joshua900905/final-trading-bot.git
- %cd final-trading-bot/
- %ls
+
 # 確保基礎庫版本與 Colab 兼容
 !pip install "pandas==2.2.2" "numpy>=1.22,<2.1"
 
@@ -68,8 +67,11 @@ except Exception as e:
      print(f"導入 pandas_ta 時發生其他錯誤: {e}")
      traceback.print_exc()
 
-     !python tune_single_stock.py 
-     !python evaluate_single_stock.py
+%cd final-trading-bot/
+%ls
+
+    !python tune_single_stock.py 
+    !python evaluate_single_stock,py
      # --- 正確的 TensorBoard 啟動命令 ---
 %load_ext tensorboard
 %tensorboard --logdir ./tuning_tensorboard/2330/
