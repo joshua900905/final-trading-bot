@@ -198,7 +198,7 @@ if __name__ == '__main__':
     RUN_EVALUATION = False
 
     # --- Training Parameters (for Tuning) ---
-    START_DATE_TRAIN = '20220101' # 可以使用與批量訓練相同的日期
+    START_DATE_TRAIN = '20200101' # 可以使用與批量訓練相同的日期
     END_DATE_TRAIN = '20221231'
     INITIAL_CAPITAL_PER_MODEL = 5000000.0 # 虛擬資金
     SHARES_PER_TRADE_TRAIN = 1000      # 1張
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     # --- 窗口大小 (自動計算) ---
     WINDOW_SIZE_TRAIN = max(MA_SHORT_TRAIN, RSI_PERIOD_TRAIN, ATR_PERIOD_TRAIN) + 10
     # --- 訓練步數 (調試時可以減少) ---
-    TOTAL_TIMESTEPS_PER_MODEL = 30000  # <<<--- 減少步數以便快速看到結果
+    TOTAL_TIMESTEPS_PER_MODEL = 100000  # <<<--- 減少步數以便快速看到結果
     # --- 獎勵/懲罰係數 (重點調優參數) ---
     REWARD_SCALING_TRAIN = 1.0          # 獎勵縮放
     SL_PENALTY_FACTOR_TRAIN = 0.5      # 價格低於 SL 的懲罰
@@ -289,7 +289,7 @@ if __name__ == '__main__':
                 # 訓練模型
                 print(f"  開始訓練 {TOTAL_TIMESTEPS_PER_MODEL} 步...")
                 # model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, callback=eval_callback) # 使用回調
-                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=10) # 調整日誌間隔以便觀察
+                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=1) # 調整日誌間隔以便觀察
                 print(f"  訓練完成。")
 
                 # 儲存最終模型 (如果不用 EvalCallback 保存最佳模型)
