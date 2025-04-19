@@ -215,7 +215,7 @@ if __name__ == '__main__':
     REWARD_SCALING_TRAIN = 1.0          # 獎勵縮放
     SL_PENALTY_FACTOR_TRAIN = 0.5      # 價格低於 SL 的懲罰
     PROFIT_BONUS_FACTOR_TRAIN = 0.3    # 實現盈利的獎勵
-    LOSS_PENALTY_FACTOR_TRAIN = 0.45    # 實現虧損的懲罰
+    LOSS_PENALTY_FACTOR_TRAIN = 0.3    # 實現虧損的懲罰
     HOLDING_LOSS_PENALTY_TRAIN = 0.01  # 持有未實現虧損的懲罰
     TRANSACTION_PENALTY_TRAIN = 0.005  # 交易成本懲罰
     # --- PPO 超參數 (可選調優) ---
