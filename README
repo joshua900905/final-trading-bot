@@ -1,1 +1,71 @@
-!pip install stable-baselines3[extra] gymnasium pandas pandas_ta requests matplotlib
+!git clone https://github.com/joshua900905/final-trading-bot.git
+ %cd final-trading-bot/
+ %ls
+# 確保基礎庫版本與 Colab 兼容
+!pip install "pandas==2.2.2" "numpy>=1.22,<2.1"
+
+# 安裝 stable-baselines3 和其他依賴 (除了 pandas-ta)
+!pip install stable-baselines3[extra] gymnasium requests matplotlib
+!pip install pandas-ta==0.3.14b0
+
+
+# --- 緊急修改 pandas-ta 源碼 (修正路徑) ---
+import os
+import numpy # 仍然需要導入 numpy 以觸發可能的路徑問題，但主要用固定路徑
+
+# --- 直接使用錯誤信息中提示的路徑 ---
+SQUEEZE_PRO_PATH = '/usr/local/lib/python3.11/dist-packages/pandas_ta/momentum/squeeze_pro.py'
+
+print(f"嘗試修改文件: {SQUEEZE_PRO_PATH}")
+
+try:
+    if not os.path.exists(SQUEEZE_PRO_PATH):
+         print(f"錯誤：文件 {SQUEEZE_PRO_PATH} 不存在。請確認 pandas-ta 是否已正確安裝在此路徑。")
+         # 你可以嘗試列出目錄內容來調試：
+         # print("檢查目錄內容:")
+         # !ls -l /usr/local/lib/python3.11/dist-packages/pandas_ta/momentum/
+    else:
+        with open(SQUEEZE_PRO_PATH, 'r') as f:
+            lines = f.readlines()
+
+        # 檢查第二行是否是錯誤的導入 (索引為 1)
+        line_index_to_check = 1
+        if len(lines) > line_index_to_check and 'from numpy import NaN as npNaN' in lines[line_index_to_check]:
+            print(f"找到錯誤的導入語句，正在修改 {SQUEEZE_PRO_PATH} ...")
+            # 修改為正確的導入
+            lines[line_index_to_check] = 'from numpy import nan as npNaN\n' # 使用小寫 nan
+
+            # 寫回修改後的內容
+            with open(SQUEEZE_PRO_PATH, 'w') as f:
+                f.writelines(lines)
+            print("文件修改成功！")
+        elif len(lines) > line_index_to_check:
+            print(f"{SQUEEZE_PRO_PATH} 的第 {line_index_to_check + 1} 行不是預期的錯誤導入 ('{lines[line_index_to_check].strip()}'), 未作修改。可能已被修復或版本不同。")
+        else:
+             print(f"錯誤：文件 {SQUEEZE_PRO_PATH} 行數不足，無法檢查第二行。")
+
+except FileNotFoundError:
+    print(f"錯誤：找不到文件 {SQUEEZE_PRO_PATH}。請確保 pandas-ta 已安裝。")
+except Exception as e:
+    print(f"修改文件時發生錯誤: {e}")
+    import traceback
+    traceback.print_exc()
+
+# --- 修改完成後，嘗試導入以驗證 ---
+print("\n嘗試導入 pandas_ta...")
+try:
+    import pandas_ta as ta
+    print("成功導入修改後的 pandas_ta!")
+except ImportError as e:
+    # 如果修改後仍然導入失敗，打印錯誤
+    print(f"導入 pandas_ta 仍然失敗: {e}")
+    # 再次檢查是否是 NaN 問題
+    if "cannot import name 'NaN' from 'numpy'" in str(e):
+        print(">>> 似乎仍然是 NaN 導入問題，修改可能未生效或路徑錯誤。")
+    else:
+         traceback.print_exc() # 打印其他導入錯誤
+except Exception as e:
+     print(f"導入 pandas_ta 時發生其他錯誤: {e}")
+     traceback.print_exc()
+
+     !python train_models.py
