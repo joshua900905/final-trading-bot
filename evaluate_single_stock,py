@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # evaluate_single_stock.py - Script for Evaluating a SINGLE Pre-trained Model
-# (Includes fixes for Indentation and NameError)
+# (Expects model trained with Multi MA Features: MA10, MA20, MA50)
 
 import numpy as np
 import pandas as pd
@@ -24,9 +24,7 @@ except ImportError:
 # --- Stock API Class ---
 class Stock_API:
     """Stock API Class - Buy/Sell methods won't be called by TradeExecutor in backtest mode."""
-    def __init__(self, account, password):
-        self.account = account; self.password = password
-        self.base_url = 'http://140.116.86.242:8081/stock/api/v1'
+    def __init__(self, account, password): self.account = account; self.password = password; self.base_url = 'http://140.116.86.242:8081/stock/api/v1'
     def Get_Stock_Informations(self, stock_code, start_date, stop_date):
         information_url = (f"{self.base_url}/api_get_stock_info_from_date_json/{stock_code}/{start_date}/{stop_date}");
         try: 
@@ -42,12 +40,20 @@ class Stock_API:
 # --- Refactored Evaluation Classes ---
 
 class DataManager:
-    """負責加載、預處理和提供市場數據 (已適應新 API 格式, 使用 MA10)。"""
-    def __init__(self, stock_codes_initial, api, window_size, ma_short=10, rsi_period=14, atr_period=14):
-        self.stock_codes_initial = list(stock_codes_initial); self.api = api; self.window_size = window_size
-        self.ma_short_period = ma_short; self.rsi_period = rsi_period; self.atr_period = atr_period
+    """負責加載、預處理和提供市場數據 (已適應新 API 格式, 使用 MA10, MA20, MA50)。"""
+    # --- 修改: 初始化包含所有需要的週期 ---
+    def __init__(self, stock_codes_initial, api, window_size,
+                 ma_short=10, ma_medium=20, ma_long=50, rsi_period=14, atr_period=14):
+        self.stock_codes_initial = list(stock_codes_initial); self.api = api;
+        # --- 修改: window_size 基於最長週期 ---
+        self.window_size = max(ma_short, ma_medium, ma_long, rsi_period, atr_period) + 10
+        # ---
+        self.ma_short_period = ma_short; self.ma_medium_period = ma_medium; self.ma_long_period = ma_long;
+        self.rsi_period = rsi_period; self.atr_period = atr_period
         self.data_dict = {}; self.common_dates = None; self.stock_codes = []
+
     def _load_and_preprocess_single_stock(self, stock_code, start_date, end_date):
+        # print(f"  DataManager: 載入數據 {stock_code} ({start_date} to {end_date})")
         raw_data = self.api.Get_Stock_Informations(stock_code, start_date, end_date);
         if not raw_data: return None
         try:
@@ -61,15 +67,20 @@ class DataManager:
             else: df['volume'] = 0
             indicator_base_cols = ['open', 'high', 'low', 'close']; df = df.dropna(subset=indicator_base_cols)
             if df.empty: return None
+            # --- 修改: 計算所有 MA ---
             df.ta.sma(length=self.ma_short_period, close='close', append=True, col_names=(f'SMA_{self.ma_short_period}',))
+            df.ta.sma(length=self.ma_medium_period, close='close', append=True, col_names=(f'SMA_{self.ma_medium_period}',))
+            df.ta.sma(length=self.ma_long_period, close='close', append=True, col_names=(f'SMA_{self.ma_long_period}',))
+            # ---
             df.ta.rsi(length=self.rsi_period, close='close', append=True, col_names=(f'RSI_{self.rsi_period}',))
             df.ta.atr(length=self.atr_period, high='high', low='low', close='close', append=True, col_names=(f'ATR_{self.atr_period}',))
             if f'ATR_{self.atr_period}' not in df.columns: return None
             df[f'ATR_norm_{self.atr_period}'] = df[f'ATR_{self.atr_period}'] / df['close']; df[f'ATR_norm_{self.atr_period}'] = df[f'ATR_norm_{self.atr_period}'].replace([np.inf, -np.inf], 0)
-            df = df.dropna();
+            df = df.dropna(); # 移除所有指標計算產生的 NaN
             if df.empty: return None
             return df
         except Exception as e: print(f"DataManager: 處理 {stock_code} 數據時出錯: {e}"); traceback.print_exc(); return None
+
     def load_all_data(self, start_date, end_date):
         print(f"DataManager: 正在載入數據 ({start_date} to {end_date}) for {len(self.stock_codes_initial)} stocks...")
         temp_data_dict, temp_common_dates, successful_codes = {}, None, []
@@ -79,7 +90,7 @@ class DataManager:
             df = self._load_and_preprocess_single_stock(code, required_start_date_str, end_date)
             if df is not None and not df.empty:
                 df_filtered = df[df.index >= start_dt]
-                if not df_filtered.empty and len(df_filtered) >= self.window_size :
+                if not df_filtered.empty and len(df_filtered) >= self.window_size : # Ensure enough data after filtering
                     temp_data_dict[code] = df_filtered; successful_codes.append(code)
                     if temp_common_dates is None: temp_common_dates = df_filtered.index
                     else: temp_common_dates = temp_common_dates.intersection(df_filtered.index)
@@ -96,10 +107,12 @@ class DataManager:
         if stock_code in self.data_dict and date in self.data_dict[stock_code].index:
             data_slice = self.data_dict[stock_code].loc[[date]]; return data_slice.iloc[0] if not data_slice.empty else None
         else: return None
-    def get_indicator_periods(self): return {'ma_short': self.ma_short_period, 'rsi': self.rsi_period, 'atr': self.atr_period}
+    # --- 修改: 返回所有使用的週期 ---
+    def get_indicator_periods(self): return {'ma_short': self.ma_short_period, 'ma_medium': self.ma_medium_period, 'ma_long': self.ma_long_period, 'rsi': self.rsi_period, 'atr': self.atr_period}
 
 class PortfolioManager:
     """管理投資組合的狀態（此處僅針對單股票回測）。"""
+    # (保持不變)
     def __init__(self, initial_capital, stock_codes):
         self.initial_capital = initial_capital; self.stock_codes = list(stock_codes);
         if len(self.stock_codes) != 1: print("警告：PortfolioManager 設計為單股票回測，但收到多個股票代碼。")
@@ -120,7 +133,7 @@ class PortfolioManager:
                 data = data_manager.get_data_on_date(self.target_code, current_date)
                 if data is not None and pd.notna(data['close']) and data['close'] > 0: total_stock_value += shares * data['close']
                 else:
-                    print(f"PM 警告: 計算價值時 {self.target_code} @ {current_date.strftime('%Y-%m-%d')} 缺少收盤價。嘗試前日。")
+                    # print(f"PM 警告: 計算價值時 {self.target_code} @ {current_date.strftime('%Y-%m-%d')} 缺少收盤價。嘗試前日。")
                     common_dates_list = data_manager.get_common_dates()
                     try:
                          if isinstance(common_dates_list, pd.DatetimeIndex):
@@ -136,7 +149,7 @@ class PortfolioManager:
     def get_entry_atr(self, stock_code): return self.entry_atr.get(stock_code, 0.0)
 
 class TradeExecutor:
-    """負責應用資金管理規則和【模擬】提交訂單（單股票版本，已修正縮排）。"""
+    """負責應用資金管理規則和【模擬】提交訂單（單股票版本，已修正縮排和 NameError）。"""
     def __init__(self, api: Stock_API, portfolio_manager: PortfolioManager, data_manager: DataManager):
         self.api = api; self.portfolio_manager = portfolio_manager; self.data_manager = data_manager
 
@@ -149,7 +162,6 @@ class TradeExecutor:
         return simulated_success_map
 
     def determine_and_place_buy_orders(self, buy_requests, date_T):
-        """根據資金管理規則確定最終買單並【模擬】提交【已移除單筆上限，修正 final_cost 錯誤】。"""
         simulated_success_map = {}
         orders_to_submit_buy = []
         current_total_value = self.portfolio_manager.get_portfolio_value()
@@ -157,80 +169,45 @@ class TradeExecutor:
         if not isinstance(current_total_value, (int, float)): current_total_value = self.portfolio_manager.initial_capital
         if not isinstance(current_total_value, (int, float)): print("錯誤：無法獲取有效的 portfolio_value。"); return orders_to_submit_buy, simulated_success_map
         if current_total_value <= 0: print("TradeExecutor: 組合價值非正數，跳過買入。"); return orders_to_submit_buy, simulated_success_map
-
         max_capital_per_stock = current_total_value / 20.0
         print(f"TradeExecutor: [BACKTEST] 處理買單... (可用現金: {available_cash:.2f})")
         print(f"  資本限制: 單股上限={max_capital_per_stock:.2f}")
         buy_requests.sort(key=lambda x: x[0])
 
         for code, price_T in buy_requests:
-            # --- 在循環開始時初始化 final_cost ---
-            final_cost = -1.0 # 初始化為一個無效值
-
-            if not isinstance(price_T, (int, float)) or price_T <= 0:
-                # print(f"  > {code}: 無效的 price_T ({price_T})，跳過。")
-                continue
-
+            final_cost = -1.0 # Initialize final_cost
+            if not isinstance(price_T, (int, float)) or price_T <= 0: continue
             cost_per_sheet = 1000 * price_T
-            if cost_per_sheet <= 0:
-                # print(f"  > {code}: 計算出的 cost_per_sheet 無效 ({cost_per_sheet})，跳過。")
-                continue
-
-            # --- 計算初始目標張數 (基於現金) ---
+            if cost_per_sheet <= 0: continue
             target_sheets = math.floor(available_cash / cost_per_sheet) if cost_per_sheet > 0 else 0
-            if target_sheets <= 0:
-                # print(f"  > {code}: 現金不足以購買至少 1 張。")
-                continue
-
-            # --- 計算初始 potential_cost ---
-            potential_cost = target_sheets * cost_per_sheet
-            # --- 現金檢查 (理論上無需再次檢查，但保留無害) ---
-            if available_cash < potential_cost:
-                continue
-
-            # --- 檢查單股上限 ---
+            if target_sheets <= 0: continue
+            potential_cost = target_sheets * cost_per_sheet # Initial potential cost
+            if available_cash < potential_cost: continue
             current_shares = self.portfolio_manager.get_shares(code); current_stock_value = current_shares * price_T
             potential_new_value = current_stock_value + potential_cost
-
             if potential_new_value > max_capital_per_stock:
-                # print(f"  > {code}: 購買 {target_sheets} 張將超過單股上限。")
                 allowed_additional_capital = max_capital_per_stock - current_stock_value
                 if allowed_additional_capital > 0:
                      allowed_additional_sheets = math.floor(allowed_additional_capital / cost_per_sheet) if cost_per_sheet > 0 else 0
                      final_sheets_to_buy = min(target_sheets, allowed_additional_sheets);
-                     if final_sheets_to_buy > 0:
-                          target_sheets = final_sheets_to_buy;
-                          potential_cost = target_sheets * cost_per_sheet # 更新 potential_cost
-                          # print(f"    > 因單股上限，調整為購買 {target_sheets} 張。")
-                     else:
-                          # print(f"    > 單股上限不允許購買更多 {code}。")
-                          continue # 跳過此股票
-                else:
-                     # print(f"    > {code} 已達單股上限，無法購買。")
-                     continue # 跳過此股票
-
-            # --- 在所有條件檢查和調整之後，賦值給 final_cost ---
+                     if final_sheets_to_buy > 0: target_sheets = final_sheets_to_buy; potential_cost = target_sheets * cost_per_sheet # Update potential_cost
+                     else: continue
+                else: continue
+            # Assign potential_cost to final_cost after all adjustments
             final_cost = potential_cost
-
-            # --- 最後的檢查 (target_sheets > 0 且現金充足) ---
-            if target_sheets <= 0: continue # 再次檢查 target_sheets
-            if available_cash < final_cost: # 使用 final_cost 再次檢查現金
-                # print(f"  > {code}: 最終現金檢查不足。")
-                continue
-
-            # --- 如果所有檢查通過，添加到列表並更新模擬現金 ---
+            if target_sheets <= 0: continue;
+            if available_cash < final_cost: continue; # Final cash check using final_cost
             shares_to_buy_api = target_sheets * 1000
             orders_to_submit_buy.append((code, shares_to_buy_api, price_T)); available_cash -= final_cost
 
-        # --- 模擬提交訂單 ---
         print("TradeExecutor: [BACKTEST] 模擬提交買單...")
         for code, shares_api, price in orders_to_submit_buy:
             sheets = shares_api/1000; print(f"  [BACKTEST] 模擬提交買單: {sheets:.0f} 張 {code}");
             simulated_success_map[code] = True
-
         return orders_to_submit_buy, simulated_success_map
+
 class SimulationEngine:
-    """主回測引擎（單股票評估版本，已修正縮排）。"""
+    """主回測引擎（單股票評估版本，使用 Multi MA）。"""
     def __init__(self, start_date, end_date, data_manager: DataManager,
                  portfolio_manager: PortfolioManager, trade_executor: TradeExecutor,
                  models: dict, # {stock_code: model} - 這裡只會有一個模型
@@ -242,20 +219,40 @@ class SimulationEngine:
         if not self.target_stock_code or self.target_stock_code not in self.models: raise ValueError("目標股票代碼無效或缺少對應模型。")
         self.stock_codes = [self.target_stock_code]
         indicator_params = data_manager.get_indicator_periods()
-        self.ma_short_period = indicator_params['ma_short']; self.rsi_period = indicator_params['rsi']; self.atr_period = indicator_params['atr']
+        # --- 修改: 獲取所有 MA 週期 ---
+        self.ma_short_period = indicator_params['ma_short']
+        self.ma_medium_period = indicator_params['ma_medium'] # 假設 DataManager 返回
+        self.ma_long_period = indicator_params['ma_long']     # 假設 DataManager 返回
+        # ---
+        self.rsi_period = indicator_params['rsi']; self.atr_period = indicator_params['atr']
         self.sl_multiplier = sl_multiplier; self.tp_multiplier = tp_multiplier
-        self.features_per_stock = 7
+        # --- 修改: 觀察空間維度 ---
+        self.features_per_stock = 11
+        # ---
         self.portfolio_history = []; self.dates_history = []
 
     def _get_single_stock_observation(self, stock_code, date_idx):
+        """計算單支股票的觀察狀態向量 (使用 MA10, MA20, MA50)。"""
         common_dates = self.data_manager.get_common_dates();
         if date_idx < 0 or date_idx >= len(common_dates): return np.zeros(self.features_per_stock, dtype=np.float32)
         current_date = common_dates[date_idx]; obs_data = self.data_manager.get_data_on_date(stock_code, current_date)
         if obs_data is None: return np.zeros(self.features_per_stock, dtype=np.float32)
         try:
             close_price = obs_data['close']; atr_val = obs_data.get(f'ATR_{self.atr_period}', 0.0); atr_norm_val = obs_data.get(f'ATR_norm_{self.atr_period}', 0.0)
-            ma_short_val = obs_data.get(f'SMA_{self.ma_short_period}', close_price); rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0)
-            price_ma_ratio = close_price / ma_short_val if ma_short_val != 0 else 1.0; rsi_val = rsi_val_raw / 100.0
+            # --- 修改: 獲取所有 MA 值 ---
+            ma10_val = obs_data.get(f'SMA_{self.ma_short_period}', close_price)
+            ma20_val = obs_data.get(f'SMA_{self.ma_medium_period}', close_price) # 使用中週期
+            ma50_val = obs_data.get(f'SMA_{self.ma_long_period}', close_price)   # 使用長週期
+            # ---
+            rsi_val_raw = obs_data.get(f'RSI_{self.rsi_period}', 50.0)
+            # --- 修改: 計算所有 MA 相關特徵 ---
+            price_ma10_ratio = close_price / ma10_val if ma10_val != 0 else 1.0
+            price_ma20_ratio = close_price / ma20_val if ma20_val != 0 else 1.0
+            price_ma50_ratio = close_price / ma50_val if ma50_val != 0 else 1.0
+            ma10_ma20_ratio = ma10_val / ma20_val if ma20_val != 0 else 1.0
+            ma20_ma50_ratio = ma20_val / ma50_val if ma50_val != 0 else 1.0
+            # ---
+            rsi_val = rsi_val_raw / 100.0
             holding_position = 1.0 if self.portfolio_manager.get_shares(stock_code) > 0 else 0.0
             potential_sl, potential_tp, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl = 0.0, 0.0, 0.0, 0.0, 0.0
             entry_p, entry_a = self.portfolio_manager.get_entry_price(stock_code), self.portfolio_manager.get_entry_atr(stock_code)
@@ -263,7 +260,15 @@ class SimulationEngine:
                 potential_sl = entry_p - self.sl_multiplier * entry_a; potential_tp = entry_p + self.tp_multiplier * entry_a
                 if close_price > 0: distance_to_sl_norm = (close_price - potential_sl) / close_price; distance_to_tp_norm = (potential_tp - close_price) / close_price
                 if close_price < potential_sl and potential_sl > 0: is_below_potential_sl = 1.0
-            stock_features = np.array([ price_ma_ratio, rsi_val, atr_norm_val, holding_position, distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl ], dtype=np.float32)
+            # --- 修改: 組裝 11 個特徵 ---
+            stock_features = np.array([
+                price_ma10_ratio, price_ma20_ratio, price_ma50_ratio, # Price vs MAs (3)
+                ma10_ma20_ratio, ma20_ma50_ratio,                     # MA vs MA (2)
+                rsi_val, atr_norm_val,                                # Oscillators/Vol (2)
+                holding_position,                                     # Position Info (1)
+                distance_to_sl_norm, distance_to_tp_norm, is_below_potential_sl # SL/TP Info (3)
+            ], dtype=np.float32)
+            # ---
             stock_features = np.nan_to_num(stock_features, nan=0.0, posinf=1e9, neginf=-1e9); return stock_features
         except Exception as e: print(f"錯誤 ({stock_code}): Obs 未知錯誤 @ {current_date}: {e}"); traceback.print_exc(); return np.zeros(self.features_per_stock, dtype=np.float32)
 
@@ -279,15 +284,17 @@ class SimulationEngine:
 
         for current_idx in range(start_idx, end_idx):
             date_T = common_dates[current_idx]; date_T1 = common_dates[current_idx + 1]
-            # --- 在純回測模式下，is_live_today 永遠是 False ---
-            is_live_today = False # Hardcoded for pure backtesting script
             print(f"\n====== Day T: {date_T.strftime('%Y-%m-%d')} (收盤後決策) [BACKTEST MODE] ======")
-
-            # --- 決策階段 ---
             sell_requests_plan, buy_requests_plan = [], []
             code = self.target_stock_code
             if code in self.models:
-                obs = self._get_single_stock_observation(code, current_idx); action, _states = self.models[code].predict(obs, deterministic=True)
+                # --- 修改: 確保觀察空間維度正確 (應該是 11) ---
+                obs = self._get_single_stock_observation(code, current_idx);
+                if obs.shape[0] != self.features_per_stock: # 添加檢查
+                     print(f"錯誤: 觀察值維度 ({obs.shape[0]}) 與預期 ({self.features_per_stock}) 不符！")
+                     continue # 跳過這一天
+                action, _states = self.models[code].predict(obs, deterministic=True)
+                # ---
                 data_T = self.data_manager.get_data_on_date(code, date_T); price_T = data_T['close'] if data_T is not None and pd.notna(data_T['close']) else 0
                 if action == 2 and self.portfolio_manager.get_shares(code) > 0:
                     sheets_to_sell = math.floor(self.portfolio_manager.get_shares(code) / 1000)
@@ -295,19 +302,15 @@ class SimulationEngine:
                 elif action == 1 and self.portfolio_manager.get_shares(code) == 0 and price_T > 0:
                     buy_requests_plan.append((code, price_T))
 
-            # --- 執行階段 (模擬提交訂單) ---
             print("--- 調用 TradeExecutor (模擬) ---")
-            api_sell_success = self.trade_executor.place_sell_orders(sell_requests_plan) # 移除了 is_live
-            planned_buy_orders, api_buy_success = self.trade_executor.determine_and_place_buy_orders(buy_requests_plan, date_T) # 移除了 is_live
+            api_sell_success = self.trade_executor.place_sell_orders(sell_requests_plan)
+            planned_buy_orders, api_buy_success = self.trade_executor.determine_and_place_buy_orders(buy_requests_plan, date_T)
             print("--- TradeExecutor 調用完成 (模擬) ---")
 
-            # --- 結算階段 (T+1 收盤後 - 模擬成交) ---
             print(f"\n====== Day T+1: {date_T1.strftime('%Y-%m-%d')} (盤後結算) [BACKTEST MODE] ======")
             executed_trades_info = [];
 
-            # --- Backtest 模式: 模擬成交 (加入價格區間判斷) ---
-            # print("SimulationEngine: [BACKTEST] 模擬成交...") # 可以移到循環外或刪除
-            # 模擬賣出
+            # --- Backtest 模式: 模擬成交 ---
             for code, shares_api, price_T in sell_requests_plan:
                 data_T1 = self.data_manager.get_data_on_date(code, date_T1)
                 if data_T1 is not None:
@@ -315,7 +318,6 @@ class SimulationEngine:
                     if price_T > 0 and high_T1 != -np.inf and price_T <= high_T1:
                         if price_T1_open > 0: proceeds = shares_api * price_T1_open; self.portfolio_manager.update_on_sell(code, shares_api, proceeds); sheets = shares_api / 1000; executed_trades_info.append(f"{code}:SELL_{sheets:.0f}張 (Sim)")
                         else: print(f"[BACKTEST] 警告: {code} @ {date_T1} 開盤價無效"); self.portfolio_manager.update_on_sell(code, shares_api, 0)
-            # 模擬買入
             for code, shares_api, price_T in planned_buy_orders:
                 data_T1 = self.data_manager.get_data_on_date(code, date_T1)
                 if data_T1 is not None:
@@ -325,7 +327,6 @@ class SimulationEngine:
                             cost = shares_api * price_T1_open
                             if self.portfolio_manager.get_cash() >= cost: self.portfolio_manager.update_on_buy(code, shares_api, cost, atr_T1); sheets = shares_api / 1000; executed_trades_info.append(f"{code}:BUY_{sheets:.0f}張 (Sim)")
 
-            # --- 共同邏輯: 計算並更新 T+1 收盤後的組合價值 ---
             current_value = self.portfolio_manager.calculate_and_update_portfolio_value(self.data_manager, date_T1)
             self.portfolio_history.append(current_value); self.dates_history.append(date_T1)
             print(f"本日結算後組合價值: {current_value:.2f}");
@@ -333,6 +334,7 @@ class SimulationEngine:
 
         self.report_results(); self.plot_performance()
 
+    # report_results 和 plot_performance 保持不變...
     def report_results(self):
         final_portfolio_value = self.portfolio_manager.get_portfolio_value(); initial_capital = self.portfolio_manager.initial_capital
         total_return_pct = ((final_portfolio_value - initial_capital) / initial_capital) * 100 if initial_capital else 0
@@ -346,77 +348,75 @@ class SimulationEngine:
                 plt.plot(portfolio_series.index, portfolio_series.values, label='Portfolio Value', linewidth=1.5); plt.title(f"{self.target_stock_code} Backtest ({self.start_date_str} to {self.end_date_str})")
                 plt.xlabel("Date"); plt.ylabel("Portfolio Value (TWD)"); plt.legend(); plt.grid(True); plt.tight_layout(); import matplotlib.ticker as mtick
                 ax = plt.gca(); ax.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.0f')); plt.xticks(rotation=45)
-                plt.savefig(f"portfolio_curve_{self.target_stock_code}_backtest.png", dpi=300)
-                print(f"投資組合價值曲線圖已保存為 portfolio_curve_{self.target_stock_code}_backtest.png")
+                plt.savefig(f"portfolio_curve_{self.target_stock_code}_backtest_multiMA.png", dpi=300) # 修改圖片名稱
+                print(f"投資組合價值曲線圖已保存為 portfolio_curve_{self.target_stock_code}_backtest_multiMA.png")
             else: print(f"警告: 日期歷史({len(self.dates_history)})與價值歷史({len(self.portfolio_history)})長度不匹配或為空，無法繪圖。")
         except ImportError: print("未安裝 matplotlib。請運行 'pip install matplotlib'")
         except Exception as e: print(f"繪製圖表時出錯: {e}")
 
 
+# --- 主程序入口 ---
 if __name__ == '__main__':
-     # --- !!! 重要：請替換為您的 API 憑證 !!! ---
-     API_ACCOUNT = "N26132089" # 使用您提供的帳號
-     API_PASSWORD = "joshua900905" # 使用您提供的密碼
-
-     # --- 要評估的單支股票 ---
-     TARGET_STOCK_CODE_EVAL = '2330' # <<<--- 確保這裡的代碼正確
-
-     # --- 評估參數 ---
-     EVAL_START_DATE = '20180101' # 您使用的評估起始日期
-     EVAL_END_DATE = '20250417' # 您使用的評估結束日期
-     TOTAL_INITIAL_CAPITAL = 500000000.0 # 您使用的初始資金
-
-     # --- 修改: 指向正確的模型加載目錄和文件名格式 ---
-     # 基礎目錄
-     MODELS_BASE_DIR = "tuned_models"
-     # !!! 新增: 您在 tune_single_stock.py 中使用的實驗名稱 !!!
-     # !!! 請確保這個名稱與您訓練時使用的 TENSORBOARD_LOG_DIR 和 MODELS_SAVE_DIR 中的名稱一致 !!!
-     EXPERIMENT_NAME = "ma10_enhanced_reward_with_holding_penalty_v1" # <<<--- 確認這個名稱是否正確
-     # 模型文件名格式
+     API_ACCOUNT = "N26132089"
+     API_PASSWORD = "joshua900905"
+     TARGET_STOCK_CODE_EVAL = '2330'
+     EVAL_START_DATE = '20230101' # <<<--- 建議使用樣本外日期
+     EVAL_END_DATE = '20231231'   # <<<--- 建議使用樣本外日期
+     TOTAL_INITIAL_CAPITAL = 5000000.0 # 調整回測初始資金
+     # --- 修改: 指向 Multi-MA 模型目錄 ---
+     # !!! 確保這個目錄是您用 Multi-MA 特徵訓練後保存模型的目錄 !!!
+     MODELS_LOAD_DIR = "tuned_models/2330/multi_ma_enhanced_reward_holding_penalty_v1" # <<<--- 假設的目錄名
      MODEL_FILE_NAME = f"ppo_agent_{TARGET_STOCK_CODE_EVAL}_final.zip"
-     # --- 修改: 拼接正確的完整路徑，包含實驗名稱子目錄 ---
-     MODEL_LOAD_PATH = os.path.join(MODELS_BASE_DIR, TARGET_STOCK_CODE_EVAL, EXPERIMENT_NAME, MODEL_FILE_NAME)
-     # --- 修改結束 ---
+     MODEL_LOAD_PATH = os.path.join(MODELS_LOAD_DIR, MODEL_FILE_NAME) # 注意：這裡假設模型直接在此目錄下
+     # 如果模型在股票代碼子目錄下，則用:
+     # MODEL_LOAD_PATH = os.path.join(MODELS_LOAD_DIR, TARGET_STOCK_CODE_EVAL, MODEL_FILE_NAME)
+     # ---
 
      # --- 指標和窗口參數 (必須與訓練時完全一致) ---
      MA_SHORT = 10
+     # --- 新增: 評估時需要的週期 ---
+     MA_MEDIUM = 20
+     MA_LONG = 50
+     # ---
      RSI_PERIOD = 14
      ATR_PERIOD = 14
-     SL_ATR_MULT = 2.0 # <<<--- 確保與訓練時計算觀察值用的 sl_atr_multiplier 一致
-     TP_ATR_MULT = 3.0 # <<<--- 確保與訓練時計算觀察值用的 tp_atr_multiplier 一致
-     WINDOW_SIZE = max(MA_SHORT, RSI_PERIOD, ATR_PERIOD) + 10
+     SL_ATR_MULT = 2.0
+     TP_ATR_MULT = 3.0
+     # --- 修改: 窗口大小基於 MA50 ---
+     WINDOW_SIZE = max(MA_SHORT, MA_MEDIUM, MA_LONG, RSI_PERIOD, ATR_PERIOD) + 10
+     # ---
 
-     # --- Phase Selection ---
      RUN_TRAINING = False
      RUN_EVALUATION = True
 
      if RUN_TRAINING: print("錯誤：此腳本僅用於單股票評估。")
      if RUN_EVALUATION:
-        print(f"\n=============== 開始單股票回測 ({TARGET_STOCK_CODE_EVAL}) ===============")
-
-        # --- 使用拼接好的 MODEL_LOAD_PATH ---
-        print(f"嘗試加載模型: {MODEL_LOAD_PATH}") # 打印路徑以確認
-        if not os.path.exists(MODEL_LOAD_PATH):
-             print(f"錯誤：找不到模型文件 '{MODEL_LOAD_PATH}'。請檢查：")
-             print(f"1. 基礎目錄 '{MODELS_BASE_DIR}' 是否正確？")
-             print(f"2. 股票子目錄 '{TARGET_STOCK_CODE_EVAL}' 是否存在？")
-             print(f"3. 實驗名稱子目錄 '{EXPERIMENT_NAME}' 是否正確且存在？")
-             print(f"4. 模型文件名 '{MODEL_FILE_NAME}' 是否正確？")
-             print("\n當前工作目錄下的 tuned_models 結構:")
-             exit()
+        print(f"\n=============== 開始單股票回測 ({TARGET_STOCK_CODE_EVAL} - Multi MA Model) ===============")
+        if not os.path.exists(MODEL_LOAD_PATH): print(f"錯誤：找不到模型文件 '{MODEL_LOAD_PATH}'。"); exit()
         else:
-             # --- 創建組件 ---
              print("--- 初始化評估組件 ---")
-             # ... (後續創建組件和運行引擎的代碼保持不變) ...
              api_eval = Stock_API(API_ACCOUNT, API_PASSWORD)
-             data_manager_eval = DataManager( stock_codes_initial=[TARGET_STOCK_CODE_EVAL], api=api_eval, window_size=WINDOW_SIZE, ma_short=MA_SHORT, rsi_period=RSI_PERIOD, atr_period=ATR_PERIOD )
+             # --- 修改: DataManager 初始化傳遞所有 MA 週期 ---
+             data_manager_eval = DataManager(
+                 stock_codes_initial=[TARGET_STOCK_CODE_EVAL], api=api_eval, window_size=WINDOW_SIZE,
+                 ma_short=MA_SHORT, ma_medium=MA_MEDIUM, ma_long=MA_LONG, # 傳遞所有週期
+                 rsi_period=RSI_PERIOD, atr_period=ATR_PERIOD
+             )
+             # ---
              if data_manager_eval.load_all_data(EVAL_START_DATE, EVAL_END_DATE):
                  portfolio_manager_eval = PortfolioManager( initial_capital=TOTAL_INITIAL_CAPITAL, stock_codes=data_manager_eval.get_stock_codes() )
                  trade_executor_eval = TradeExecutor( api=api_eval, portfolio_manager=portfolio_manager_eval, data_manager=data_manager_eval )
                  models_eval = {}; print(f"--- 從 '{MODEL_LOAD_PATH}' 加載預訓練模型 ---");
                  try: models_eval[TARGET_STOCK_CODE_EVAL] = PPO.load(MODEL_LOAD_PATH); print(f"  > 已成功加載模型: {TARGET_STOCK_CODE_EVAL}")
                  except Exception as e: print(f"加載模型 {TARGET_STOCK_CODE_EVAL} 失敗: {e}"); exit()
-                 simulation_engine = SimulationEngine( start_date=EVAL_START_DATE, end_date=EVAL_END_DATE, data_manager=data_manager_eval, portfolio_manager=portfolio_manager_eval, trade_executor=trade_executor_eval, models=models_eval, sl_multiplier=SL_ATR_MULT, tp_multiplier=TP_ATR_MULT )
+
+                 # --- 修改: SimulationEngine 初始化傳遞所有 MA 週期 (通過 DataManager 間接獲取) ---
+                 simulation_engine = SimulationEngine(
+                     start_date=EVAL_START_DATE, end_date=EVAL_END_DATE, data_manager=data_manager_eval,
+                     portfolio_manager=portfolio_manager_eval, trade_executor=trade_executor_eval, models=models_eval,
+                     sl_multiplier=SL_ATR_MULT, tp_multiplier=TP_ATR_MULT
+                 )
+                 # ---
                  simulation_engine.run_backtest()
              else: print("數據管理器初始化失敗，無法進行評估。")
         print("\n=============== 單股票回測完成 ===============")
