@@ -68,4 +68,9 @@ except Exception as e:
      print(f"導入 pandas_ta 時發生其他錯誤: {e}")
      traceback.print_exc()
 
-     !python train_models.py
+     !python tune_single_stock.py 
+     !python evaluate_single_stock.py
+     # --- 正確的 TensorBoard 啟動命令 ---
+%load_ext tensorboard
+%tensorboard --logdir ./tuning_tensorboard/2330/
+
