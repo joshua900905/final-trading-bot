@@ -319,8 +319,8 @@ if __name__ == '__main__':
      API_ACCOUNT = "N26132089"
      API_PASSWORD = "joshua900905"
      TARGET_STOCK_CODE_EVAL = '2454'
-     EVAL_START_DATE = '20230101'
-     EVAL_END_DATE = '20241231'
+     EVAL_START_DATE = '20240101'
+     EVAL_END_DATE = '20250418'
      TOTAL_INITIAL_CAPITAL = 500000000.0
      # --- 修改: 指向 MA10/MA20 模型目錄 ---
      # !!! 確保這個目錄與您訓練 MA10/MA20 模型時使用的目錄一致 !!!
@@ -335,8 +335,8 @@ if __name__ == '__main__':
      MA_MEDIUM = 20 # <<<--- 新增中期參數
      RSI_PERIOD = 14
      ATR_PERIOD = 14
-     SL_ATR_MULT = 1.0 # <<<--- 確保與訓練時一致
-     TP_ATR_MULT = 1.5 # <<<--- 確保與訓練時一致
+     SL_ATR_MULT = 2 # <<<--- 確保與訓練時一致
+     TP_ATR_MULT = 3 # <<<--- 確保與訓練時一致
      # --- 修改: 窗口大小基於 MA20 ---
      WINDOW_SIZE = max(MA_SHORT, MA_MEDIUM, RSI_PERIOD, ATR_PERIOD) + 10
      # ---
