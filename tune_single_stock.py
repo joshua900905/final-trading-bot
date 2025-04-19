@@ -220,19 +220,19 @@ if __name__ == '__main__':
     MA_MEDIUM_TRAIN = 20
     RSI_PERIOD_TRAIN = 14
     ATR_PERIOD_TRAIN = 14
-    SL_ATR_MULT_TRAIN = 1.0
-    TP_ATR_MULT_TRAIN = 1.5
+    SL_ATR_MULT_TRAIN = 2
+    TP_ATR_MULT_TRAIN = 3
     # WINDOW_SIZE is calculated in Env now
-    TOTAL_TIMESTEPS_PER_MODEL = 300000
+    TOTAL_TIMESTEPS_PER_MODEL = 150000
     REWARD_SCALING_TRAIN = 1.0
-    SL_PENALTY_FACTOR_TRAIN = 0.2
-    PROFIT_BONUS_FACTOR_TRAIN = 0.3
-    LOSS_PENALTY_FACTOR_TRAIN = 0.3 # Match profit bonus or slightly higher
-    HOLDING_LOSS_PENALTY_TRAIN = 0.005
-    TRANSACTION_PENALTY_TRAIN = 0.001
-    MAX_HOLDING_PENALTY_TRAIN = 0.05
+    SL_PENALTY_FACTOR_TRAIN = 0.4      # <<<--- 提高 SL 狀態懲罰
+    PROFIT_BONUS_FACTOR_TRAIN = 0.5      # 保持中等盈利獎勵
+    LOSS_PENALTY_FACTOR_TRAIN = 0.5      # <<<--- 提高虧損懲罰 (大於盈利獎勵)
+    HOLDING_LOSS_PENALTY_TRAIN = 0.002  # <<<--- 提高持有虧損懲罰
+    TRANSACTION_PENALTY_TRAIN = 0.005  # <<<--- 提高交易成本懲罰
+    MAX_HOLDING_PENALTY_TRAIN = 0.05    # 保持較低不作為懲罰
     HOLDING_PENALTY_INCREASE_RATE_TRAIN = 0.001
-    HOLDING_TREND_BONUS_FACTOR_TRAIN = 0.01 # Bonus for holding in uptrend
+    HOLDING_TREND_BONUS_FACTOR_TRAIN = 0.01 # 保持順勢獎勵
     PPO_ENT_COEF = 0.01
     PPO_LEARNING_RATE = 0.0003
     PPO_N_STEPS = 2048
@@ -265,7 +265,7 @@ if __name__ == '__main__':
                             ent_coef=PPO_ENT_COEF, learning_rate=PPO_LEARNING_RATE, n_steps=PPO_N_STEPS, batch_size=PPO_BATCH_SIZE)
 
                 print(f"  開始訓練 {TOTAL_TIMESTEPS_PER_MODEL} 步...")
-                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=100) # Log every 100 updates
+                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=1) 
                 print(f"  訓練完成。")
                 save_path = os.path.join(MODELS_SAVE_DIR, f"ppo_agent_{TARGET_STOCK_CODE}_final")
                 model.save(save_path); print(f"  最終模型已儲存: {save_path}.zip")
