@@ -206,15 +206,15 @@ if __name__ == '__main__':
     # --- Configuration ---
     API_ACCOUNT = "N26132089"
     API_PASSWORD = "joshua900905"
-    TARGET_STOCK_CODE = '2330'
+    TARGET_STOCK_CODE = '2454'
 
     RUN_TRAINING = True
     RUN_EVALUATION = False
 
     # --- Training Parameters (MA10/20, Enhanced Rewards + Holding Penalty + Trend Bonus) ---
-    START_DATE_TRAIN = '20180101'
+    START_DATE_TRAIN = '20160101'
     END_DATE_TRAIN = '20231231'
-    INITIAL_CAPITAL_PER_MODEL = 50000000.0
+    INITIAL_CAPITAL_PER_MODEL = 500000000.0
     SHARES_PER_TRADE_TRAIN = 1000
     MA_SHORT_TRAIN = 10
     MA_MEDIUM_TRAIN = 20

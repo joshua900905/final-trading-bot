@@ -71,7 +71,7 @@ except Exception as e:
 %ls
 
     !python tune_single_stock.py 
-    !python evaluate_single_stock,py
+    !python evaluate_single_stock.py
      # --- 正確的 TensorBoard 啟動命令 ---
 %load_ext tensorboard
 %tensorboard --logdir ./tuning_tensorboard/2330/

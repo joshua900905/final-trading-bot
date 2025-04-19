@@ -35,6 +35,7 @@ class Stock_API:
     def Get_User_Stocks(self): print("警告：Get_User_Stocks 在純回測模式下不應被調用。"); return []
     def Buy_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Buy_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
     def Sell_Stock(self, stock_code, stock_shares, stock_price): print(f"警告：Sell_Stock 在純回測模式下不應被調用 ({stock_code})。"); return False
+
 # --- Refactored Evaluation Classes ---
 
 class DataManager:
@@ -162,7 +163,7 @@ class TradeExecutor:
         if not isinstance(current_total_value, (int, float)): current_total_value = self.portfolio_manager.initial_capital
         if not isinstance(current_total_value, (int, float)): print("錯誤：無法獲取有效的 portfolio_value。"); return orders_to_submit_buy, simulated_success_map
         if current_total_value <= 0: print("TradeExecutor: 組合價值非正數，跳過買入。"); return orders_to_submit_buy, simulated_success_map
-        max_capital_per_stock = current_total_value / 20.0 # 單股上限仍適用
+        max_capital_per_stock = current_total_value / 1.0 # 單股上限仍適用
         print(f"TradeExecutor: [BACKTEST] 處理買單... (可用現金: {available_cash:.2f})"); print(f"  資本限制: 單股上限={max_capital_per_stock:.2f}")
         buy_requests.sort(key=lambda x: x[0])
         for code, price_T in buy_requests:
@@ -317,10 +318,10 @@ class SimulationEngine:
 if __name__ == '__main__':
      API_ACCOUNT = "N26132089"
      API_PASSWORD = "joshua900905"
-     TARGET_STOCK_CODE_EVAL = '2330'
+     TARGET_STOCK_CODE_EVAL = '2454'
      EVAL_START_DATE = '20230101'
-     EVAL_END_DATE = '20231231'
-     TOTAL_INITIAL_CAPITAL = 50000000.0
+     EVAL_END_DATE = '20241231'
+     TOTAL_INITIAL_CAPITAL = 500000000.0
      # --- 修改: 指向 MA10/MA20 模型目錄 ---
      # !!! 確保這個目錄與您訓練 MA10/MA20 模型時使用的目錄一致 !!!
      EXPERIMENT_NAME = "ma10ma20_reward_v3_trend_bonus" # <<<--- 確認實驗名稱
