@@ -383,7 +383,7 @@ if __name__ == '__main__':
                            )
 
                 print(f"  開始訓練 {TOTAL_TIMESTEPS_PER_MODEL} 步...")
-                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=100)
+                model.learn(total_timesteps=TOTAL_TIMESTEPS_PER_MODEL, log_interval=1)
                 print(f"  訓練完成。")
 
                 vec_env.save(VEC_NORMALIZE_STATS_PATH)
