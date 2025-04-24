@@ -322,7 +322,7 @@ if __name__ == '__main__':
 
     # --- Configuration ---
     API_ACCOUNT = "N26132089"; API_PASSWORD = "joshua900905"
-    TARGET_STOCK_CODE = '2454'
+    TARGET_STOCK_CODE = '2330S'
     RUN_TRAINING = True; RUN_EVALUATION = False
 
     # --- Training Parameters ---
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     STOP_LOSS_PENALTY_FACTOR_TRAIN = 1.2
     # Env Params
     WINDOW_SIZE_TRAIN = max(20, ATR_PERIOD_TRAIN + 1, EMA_PERIOD_TRAIN + 1)
-    TOTAL_TIMESTEPS_PER_MODEL = 300000
+    TOTAL_TIMESTEPS_PER_MODEL = 150000
     # PPO Params
     PPO_ENT_COEF = 0.01; PPO_LEARNING_RATE = 0.0003
     PPO_N_STEPS = 4096; PPO_BATCH_SIZE = 128
