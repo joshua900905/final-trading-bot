@@ -322,11 +322,11 @@ if __name__ == '__main__':
 
     # --- Configuration ---
     API_ACCOUNT = "N26132089"; API_PASSWORD = "joshua900905"
-    TARGET_STOCK_CODE = '2330'
+    TARGET_STOCK_CODE = '2454'
     RUN_TRAINING = True; RUN_EVALUATION = False
 
     # --- Training Parameters ---
-    START_DATE_TRAIN = '20180101'; END_DATE_TRAIN = '20231231'
+    START_DATE_TRAIN = '20200317'; END_DATE_TRAIN = '20240816'
     INITIAL_CAPITAL_PER_MODEL = 50000000.0; SHARES_PER_UNIT_TRAIN = 1000
     # Strategy Params
     EMA_PERIOD_TRAIN = 5; ATR_PERIOD_TRAIN = 14
